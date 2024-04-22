@@ -1,0 +1,12 @@
+openlr==1.0.1
+openlr_dereferencer @ git+https://github.com/davidniedzielski-tomtom/openlr-dereferencer-python.git@master
+webtool @ git+https://github.com/davidniedzielski-tomtom/openlr-webtool-python.git@main
+geoutils @ git+https://github.com/davidniedzielski-tomtom/geoutils.git@main
+pytest==8.1.1
+ConfigArgParse~=1.7
+Shapely==2.0.3
+
+pyproj~=3.6.1
+geoutils~=1.0.4
+webtool~=0.0.1
+openlr_dereferencer~=1.2.0
