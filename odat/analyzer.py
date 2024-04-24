@@ -6,8 +6,8 @@ from geoutils import buffer_wgs84_geometry, split_line, GeoCoordinates
 from openlr import LineLocationReference, LocationReferencePoint, binary_decode
 from openlr_dereferencer.decoding import MapObjects
 from openlr_dereferencer.decoding.line_decoding import LineLocation
-from shapely import LineString, Point, Polygon, intersection
-from webtool.decoder_configs import (
+from shapely import LineString, Point, Polygon, intersection, concave_hull
+from .decoder_configs import (
     StrictConfig,
     AnyPath,
     IgnoreFRC,
@@ -21,19 +21,19 @@ from .analysis_result import AnalysisResult
 from .buffer_reader import BufferReader
 
 
-class DecodingAnalysisTool:
+class Analyzer:
 
     def __init__(
         self,
         map_reader: TomTomMapReaderSQLite,
         buffer_radius: int = 20,
         lrp_radius: int = 20,
+        concavehull_ratio: float = -1.0
     ):
         self.map_reader = map_reader
         self.buffer_radius = buffer_radius
         self.lrp_radius = lrp_radius
-        self.logger = logging.getLogger(__name__)  # self.logger.setLevel(logging.DEBUG)
-        self.map_bounds: Polygon = self.map_reader.get_map_bounds()
+        self.map_bounds: Polygon = self.map_reader.get_map_bounds(concavehull_ratio)
 
     @staticmethod
     def build_decoded_ls(decode_result: LineLocation) -> LineString:

@@ -7,9 +7,9 @@ from typing import Set, Dict
 
 from shapely import wkb, LineString
 
-from webtool.decoder_configs import StrictConfig, AnyPath
+from odat.decoder_configs import StrictConfig, AnyPath
 from odat.analysis_result import AnalysisResult
-from odat.decoding_analysis_tool import DecodingAnalysisTool
+from odat.analyzer import Analyzer
 from webtool.geotools.geotool_4326 import GeoTool_4326
 from webtool.map_databases.tomtom_sqlite import TomTomMapReaderSQLite
 
@@ -39,7 +39,7 @@ class MyTestCase(unittest.TestCase):
             geo_tool=GeoTool_4326(),
             config=StrictConfig
         )
-        DecodingAnalysisTool(map_reader=rdr, buffer_radius=20).analyze("CwRE+CM+jxNMHgOn+kYTHg==", ls)
+        Analyzer(map_reader=rdr, buffer_radius=20).analyze("CwRE+CM+jxNMHgOn+kYTHg==", ls)
 
     def test_src_is_not_tgt(self):
         rdr = TomTomMapReaderSQLite(
@@ -53,7 +53,7 @@ class MyTestCase(unittest.TestCase):
         olr = "CwRE+CM+jxNMHgOn+kYTHg=="
         assert (olr in self.test_data)
         ls = self.test_data[olr]
-        DecodingAnalysisTool(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
+        Analyzer(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
 
     def test_src_is_not_tgt2(self):
         # set logging level to DEBUG
@@ -69,7 +69,7 @@ class MyTestCase(unittest.TestCase):
         olr = "CwRTJyMzRgEYJ/OUAAsBCg=="
         assert (olr in self.test_data)
         ls = self.test_data[olr]
-        res = DecodingAnalysisTool(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
+        res = Analyzer(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
         # ensure the location reference is entirely within the buffer
         print(res)
 
@@ -87,7 +87,7 @@ class MyTestCase(unittest.TestCase):
         olr = "CwR4ayNd9xPyKfi5+VMbIwM="
         assert (olr in self.test_data)
         ls = self.test_data[olr]
-        res = DecodingAnalysisTool(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
+        res = Analyzer(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
         print(res)
 
     def test_decode_within_buffer2(self):
@@ -104,7 +104,7 @@ class MyTestCase(unittest.TestCase):
         olr = "CwR1ayNg7xtjPgiGCj4bLwE="
         assert (olr in self.test_data)
         ls = self.test_data[olr]
-        res = DecodingAnalysisTool(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
+        res = Analyzer(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
         print(res)
 
     def test_decode_weird(self):
@@ -121,7 +121,7 @@ class MyTestCase(unittest.TestCase):
         olr = "C8kiHxukmRp8HPo0A6gbCw=="
         assert (olr in self.test_data)
         ls = self.test_data[olr]
-        res = DecodingAnalysisTool(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
+        res = Analyzer(map_reader=rdr, buffer_radius=20).analyze(olr, ls)
         assert True
 
     def test_bulk(self):
@@ -139,7 +139,7 @@ class MyTestCase(unittest.TestCase):
             geo_tool=GeoTool_4326(),
             config=StrictConfig
         )
-        dat = DecodingAnalysisTool(map_reader=rdr, buffer_radius=20)
+        dat = Analyzer(map_reader=rdr, buffer_radius=20)
         count: int = 0
         cumulative_frac: float = 0.0
         for olr, ls in self.test_data.items():
@@ -173,7 +173,7 @@ class MyTestCase(unittest.TestCase):
                 geo_tool=GeoTool_4326(),
                 config=StrictConfig
             )
-            dat = DecodingAnalysisTool(map_reader=rdr, buffer_radius=20)
+            dat = Analyzer(map_reader=rdr, buffer_radius=20)
             for olr, ls in self.test_data.items():
                 res = dat.analyze(olr, ls)
                 if res not in results:
