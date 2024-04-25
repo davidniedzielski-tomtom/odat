@@ -1,6 +1,9 @@
 import json
 import logging
-from typing import Dict, Set
+from time import perf_counter_ns
+from typing import Dict, Set, Tuple
+
+from functools import reduce
 
 import configargparse
 from rich.columns import Columns
@@ -15,7 +18,7 @@ from webtool.map_databases.tomtom_sqlite import TomTomMapReaderSQLite
 from odat.analysis_result import AnalysisResult
 from odat.decoder_configs import StrictConfig, RelaxedConfig
 from .analyzer import Analyzer
-from time import perf_counter_ns
+
 
 def build_results_table(results: Dict[str, Set[str]], count: int) -> Table:
     table = Table(title="OpenLR decoding analysis results")
@@ -23,47 +26,68 @@ def build_results_table(results: Dict[str, Set[str]], count: int) -> Table:
     table.add_column("Result", justify="right", style="cyan", no_wrap=True)
     table.add_column("Count", style="magenta")
     table.add_column("% of total", justify="right", style="green")
+    table.add_column("% within buffer", justify="right", style="green")
 
     for k, v in results.items():
         if len(v) == 0:
             continue
-        table.add_row(str(k), str(len(v)), f"{100.0 * len(v) / count: .02f}%")
+        table.add_row(
+            str(k),
+            str(len(v)),
+            f"{100.0 * len(v) / count: .02f}%",
+            f"{100.0 * (reduce(lambda accum,x: accum+x[1],v,0.0)) / len(v): .02f}%"
+        )
 
     return table
-def build_stats_table(total_frac: float, count: int, elapsed: float) -> Table:
+
+
+def build_stats_table(total_frac: float,
+                      count: int,
+                      elapsed: float,
+                      map_bounds_time: float,
+                      analysis_time: float) -> Table:
     table = Table(title="Run statistics")
     table.show_header = False
 
     table.add_row("OpenLRs processed", str(count))
     table.add_row("Average % within buffer", f"{100.0 * total_frac / count:.02f}%")
-    table.add_row("Elapsed time", f"{elapsed/1_000_000_000:.04f} secs")
+    table.add_row("Map boundary calculation time", f"{map_bounds_time / 1_000_000_000:.04f} secs")
+    table.add_row("OpenLR analysis time", f"{analysis_time / 1_000_000_000:.04f} secs")
+    table.add_row("Total elapsed time", f"{elapsed / 1_000_000_000:.04f} secs")
 
     return table
-def print_results(results: Dict[str, Set[str]], count: int, total_frac: float, elapsed: float):
-    results_table = build_results_table(results, count)
-    stats_table = build_stats_table(total_frac, count, elapsed)
 
+
+def print_results(
+        results: Dict[str, Set[str]],
+        count: int,
+        total_frac: float,
+        elapsed: float,
+        map_bounds_time: float,
+        analysis_time: float
+):
+    results_table = build_results_table(results, count)
+    stats_table = build_stats_table(total_frac, count, elapsed, map_bounds_time, analysis_time)
 
     panel = Panel.fit(
         Columns([results_table, stats_table]),
         width=180,
-        title="My Panel",
+        title="OpenLR decoding analysis tool result summary",
         border_style="red",
         title_align="left",
         padding=(1, 2),
     )
 
-
     console = Console()
     console.print(panel)
-    #console.print(table)
 
 
 def parse_cli_args():
     p = configargparse.ArgParser(
         default_config_files=[
-            "/Users/dave/pyton/openlr/openlr-webtool-python/config/*.ini",
-            "~/.my_settings",
+            "./*.ini",
+            "./configs/*.ini",
+            "~/.config/odat.ini",
         ]
     )
     p.add(
@@ -114,8 +138,8 @@ def parse_cli_args():
     p.add(
         "--concavehull_ratio",
         env_var="ODAT_CONCAVEHULL_RATIO",
-        help="GeosConcaveHull() ratio [0.0..1.0]. Smaller means more accurate map_extent but slower execution.  "
-        "Negative value means simple BBOX)",
+        help="GeosConcaveHull() ratio [0.0..]. Smaller means more accurate map_extent but slower execution.  "
+        ">= 1.0 means simple BBOX)",
     )
 
     p.add("--lrp_radius", env_var="ODAT_LRP_RADIUS", help="Search radius around LRP")
@@ -164,6 +188,10 @@ def get_config(config: str):
             )
 
 
+def get_map_bounds(map_reader: TomTomMapReaderSQLite, concavehull_ratio: float):
+    return map_reader.get_map_bounds(concavehull_ratio)
+
+
 def main():
     start = perf_counter_ns()
     options = parse_cli_args()
@@ -171,6 +199,7 @@ def main():
     setup_logging(options.verbose)
     geo_tool = get_geo_tool(options.target_crs)
     config = get_config(options.decoder_config)
+
 
     rdr = TomTomMapReaderSQLite(
         db_filename=options.db,
@@ -181,17 +210,22 @@ def main():
         config=config,
     )
 
+    map_bounds_start = perf_counter_ns()
+    map_bounds = get_map_bounds(rdr, float(options.concavehull_ratio))
+    map_bounds_time = perf_counter_ns() - map_bounds_start
+
     dat: Analyzer = Analyzer(
         map_reader=rdr,
         buffer_radius=int(options.buffer),
         lrp_radius=int(options.lrp_radius),
-        concavehull_ratio=float(options.concavehull_ratio),
+        map_bounds=map_bounds
     )
 
     count: int = 0
     total_frac: float = 0.0
-    results: Dict[AnalysisResult, Set[str]] = {k: set() for k in list(AnalysisResult)}
+    results: Dict[AnalysisResult, Set[Tuple[str,float]]] = {k: set() for k in list(AnalysisResult)}
 
+    analysis_start = perf_counter_ns()
     with open(options.input) as inj:
         j = json.loads(inj.read())
         for loc in j["locations"]:
@@ -203,21 +237,22 @@ def main():
                 res, frac = dat.analyze(olr, ls)
                 if olr in results[res]:
                     results[AnalysisResult.DUPLICATE_OPENLR_CODE].add(
-                        f"{olr} : Duplicate-{count}"
+                        (f"{olr} : Duplicate-{count}", 0.0)
                     )
                 else:
-                    results[res].add(olr)
+                    results[res].add((olr,frac))
                     total_frac += frac
                 count += 1
             except Exception as e:
-                results[AnalysisResult.UNKNOWN_ERROR].add(f"{olr} : Error-{e}-{count}")
+                results[AnalysisResult.UNKNOWN_ERROR].add((f"{olr} : Error-{e}-{count}", 0.0))
 
+    analysis_time = perf_counter_ns() - analysis_start
     new_r = {
         str(k).removeprefix("AnalysisResult."): v
         for k, v in sorted(results.items(), key=lambda x: len(x[1]), reverse=True)
     }
     end = perf_counter_ns()
-    print_results(new_r, count, total_frac, end-start)
+    print_results(new_r, count, total_frac, end - start, map_bounds_time, analysis_time)
 
 
 if __name__ == "__main__":

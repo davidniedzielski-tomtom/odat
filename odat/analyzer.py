@@ -1,12 +1,16 @@
 import logging
-from typing import Tuple
+from typing import Tuple, Optional
 
 import geoutils
 from geoutils import buffer_wgs84_geometry, split_line, GeoCoordinates
 from openlr import LineLocationReference, LocationReferencePoint, binary_decode
 from openlr_dereferencer.decoding import MapObjects
 from openlr_dereferencer.decoding.line_decoding import LineLocation
-from shapely import LineString, Point, Polygon, intersection, concave_hull
+from shapely import LineString, Point, Polygon, intersection
+from webtool.map_databases.tomtom_sqlite import TomTomMapReaderSQLite
+
+from .analysis_result import AnalysisResult
+from .buffer_reader import BufferReader
 from .decoder_configs import (
     StrictConfig,
     AnyPath,
@@ -15,10 +19,6 @@ from .decoder_configs import (
     IgnorePathLength,
     IgnoreBearing,
 )
-from webtool.map_databases.tomtom_sqlite import TomTomMapReaderSQLite
-
-from .analysis_result import AnalysisResult
-from .buffer_reader import BufferReader
 
 
 class Analyzer:
@@ -28,12 +28,12 @@ class Analyzer:
         map_reader: TomTomMapReaderSQLite,
         buffer_radius: int = 20,
         lrp_radius: int = 20,
-        concavehull_ratio: float = -1.0
+        map_bounds: Optional[Polygon] = None
     ):
         self.map_reader = map_reader
         self.buffer_radius = buffer_radius
         self.lrp_radius = lrp_radius
-        self.map_bounds: Polygon = self.map_reader.get_map_bounds(concavehull_ratio)
+        self.map_bounds = map_bounds
 
     @staticmethod
     def build_decoded_ls(decode_result: LineLocation) -> LineString:
@@ -55,7 +55,8 @@ class Analyzer:
 
     def analyze(self, olr: str, ls: LineString) -> Tuple[AnalysisResult, float]:
         """Analyze a location reference against a map"""
-        if not self.map_bounds.contains(ls):
+        logging.debug("Beginning analysis of OpenLR %s", olr)
+        if self.map_bounds and not self.map_bounds.covers(ls):
             return AnalysisResult.OUTSIDE_MAP_BOUNDS, 0.0
 
         decode_result: MapObjects = self.map_reader.match(olr)
@@ -65,7 +66,7 @@ class Analyzer:
                     ls, Point(ls.coords[0]), self.buffer_radius
                 )
                 decoded_ls: LineString = self.build_decoded_ls(decode_result)
-                if buffered_ls.contains(decoded_ls):
+                if buffered_ls.covers(decoded_ls):
                     return AnalysisResult.OK, 1.0
                 else:
                     # build a buffer around the source linestring
@@ -192,7 +193,7 @@ class Analyzer:
 
     @staticmethod
     def determine_restricted_decoding_failure_cause(
-            buffer_map_reader: BufferReader
+        buffer_map_reader: BufferReader,
     ) -> AnalysisResult:
         # We're here because we couldn't find a path in the restricted target map, but
         #
