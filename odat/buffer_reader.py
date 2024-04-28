@@ -23,18 +23,18 @@ from itertools import chain
 from math import sqrt
 from typing import Iterable, Optional, cast, Dict, Set
 
+from geoutils import distance
+
 # import param
 from openlr import Coordinates, FOW, FRC, LineLocationReference
+from openlr_dereferencer import decode, Config, DecoderObserver
+from openlr_dereferencer.decoding import MapObjects, DEFAULT_CONFIG
+from openlr_dereferencer.maps import Line as AbstractLine, Node as AbstractNode
+from openlr_dereferencer.maps import MapReader
 from pyproj import Geod
 from shapely import wkb
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import nearest_points
-
-from geoutils import distance
-from openlr_dereferencer import decode, Config
-from openlr_dereferencer.decoding import MapObjects, DEFAULT_CONFIG
-from openlr_dereferencer.maps import Line as AbstractLine, Node as AbstractNode
-from openlr_dereferencer.maps import MapReader
 from webtool.map_databases.tomtom_sqlite import TomTomMapReaderSQLite
 
 GEOD = Geod(ellps="WGS84")
@@ -64,13 +64,26 @@ def are_peers(candidate: Line, source: Optional[Line]) -> bool:
     if source is None:
         return False
     else:
-        return candidate.line_id == "-" + source.line_id or source.line_id == "-" + candidate.line_id
+        return (
+            candidate.line_id == "-" + source.line_id
+            or source.line_id == "-" + candidate.line_id
+        )
 
 
 class Line(AbstractLine):
 
-    def __init__(self, map_reader: BufferReader, line_id: str, fow: FOW, frc: FRC, length: float, from_int: str,
-                 to_int: str, geometry: LineString, buffer: Polygon):
+    def __init__(
+        self,
+        map_reader: BufferReader,
+        line_id: str,
+        fow: FOW,
+        frc: FRC,
+        length: float,
+        from_int: str,
+        to_int: str,
+        geometry: LineString,
+        buffer: Polygon,
+    ):
         self.id: str = line_id
         self.map_reader: BufferReader = map_reader
         self._fow: FOW = fow
@@ -115,12 +128,21 @@ class Line(AbstractLine):
 
     def distance_to(self, coord) -> float:
         """Returns the distance of this line to `coord` in meters"""
-        return GEOD.geometry_length(LineString(nearest_points(self._geometry, Point(coord.lon, coord.lat))))
+        return GEOD.geometry_length(
+            LineString(nearest_points(self._geometry, Point(coord.lon, coord.lat)))
+        )
 
 
 class Node(AbstractNode):
 
-    def __init__(self, map_reader: BufferReader, node_id: str, lon: float, lat: float, buffer: Polygon):
+    def __init__(
+        self,
+        map_reader: BufferReader,
+        node_id: str,
+        lon: float,
+        lat: float,
+        buffer: Polygon,
+    ):
         self.lon = lon
         self.lat = lat
         self.id = node_id
@@ -139,13 +161,21 @@ class Node(AbstractNode):
 
     def outgoing_lines(self, source: Optional[Line] = None) -> Iterable[Line]:
         if self.id in self.map_reader.outgoing_lines:
-            return [line for line in self.map_reader.outgoing_lines[self.id] if line.contained_in_buffer and not are_peers(line, source)]
+            return [
+                line
+                for line in self.map_reader.outgoing_lines[self.id]
+                if line.contained_in_buffer and not are_peers(line, source)
+            ]
         else:
             return []
 
     def incoming_lines(self, source: Optional[Line] = None) -> Iterable[Line]:
         if self.id in self.map_reader.incoming_lines:
-            return [line for line in self.map_reader.incoming_lines[self.id] if line.contained_in_buffer and not are_peers(line, source)]
+            return [
+                line
+                for line in self.map_reader.incoming_lines[self.id]
+                if line.contained_in_buffer and not are_peers(line, source)
+            ]
         else:
             return []
 
@@ -156,8 +186,14 @@ class Node(AbstractNode):
 # @MapReader.register
 class BufferReader(MapReader):
 
-    def __init__(self, loc_ref: LineLocationReference, buffer: Polygon, tomtom_map_reader: TomTomMapReaderSQLite,
-                 lrp_radius: int = 20, config: Config = DEFAULT_CONFIG):
+    def __init__(
+        self,
+        loc_ref: LineLocationReference,
+        buffer: Polygon,
+        tomtom_map_reader: TomTomMapReaderSQLite,
+        lrp_radius: int = 20,
+        config: Config = DEFAULT_CONFIG,
+    ):
 
         self.tomtom_map_reader = tomtom_map_reader
         self.connection = tomtom_map_reader.connection
@@ -179,12 +215,26 @@ class BufferReader(MapReader):
     def init_objects(self):
         self.find_all_candidate_lines()
         for line in self.all_lines:
-            self.nodes[line.from_int] = self.nodes.get(line.from_int,
-                                                       Node(self, line.from_int, line.geometry.coords[0][0],
-                                                            line.geometry.coords[0][1], self.buffer))
-            self.nodes[line.to_int] = self.nodes.get(line.to_int,
-                                                     Node(self, line.to_int, line.geometry.coords[-1][0],
-                                                          line.geometry.coords[-1][1], self.buffer))
+            self.nodes[line.from_int] = self.nodes.get(
+                line.from_int,
+                Node(
+                    self,
+                    line.from_int,
+                    line.geometry.coords[0][0],
+                    line.geometry.coords[0][1],
+                    self.buffer,
+                ),
+            )
+            self.nodes[line.to_int] = self.nodes.get(
+                line.to_int,
+                Node(
+                    self,
+                    line.to_int,
+                    line.geometry.coords[-1][0],
+                    line.geometry.coords[-1][1],
+                    self.buffer,
+                ),
+            )
             self.update_node_outgoing(line)
             self.update_node_incoming(line)
 
@@ -207,13 +257,31 @@ class BufferReader(MapReader):
     def create_lines(self, rows) -> None:
         for line_id, fow, frc, flowdir, start, end, length, geom in rows:
             ls = LineString(wkb.loads(geom, hex=False))
-            line = Line(map_reader=self, line_id=line_id, from_int=str(start), to_int=str(end), fow=FOW(fow),
-                        frc=FRC(frc), length=length, geometry=ls, buffer=self.buffer)
+            line = Line(
+                map_reader=self,
+                line_id=line_id,
+                from_int=str(start),
+                to_int=str(end),
+                fow=FOW(fow),
+                frc=FRC(frc),
+                length=length,
+                geometry=ls,
+                buffer=self.buffer,
+            )
             self.lines[line.id] = line
             self.all_lines.add(line)
             if flowdir == 1:
-                rev_line = Line(map_reader=self, line_id="-" + line_id, from_int=str(end), to_int=str(start),
-                                fow=FOW(fow), frc=FRC(frc), length=length, geometry=ls.reverse(), buffer=self.buffer)
+                rev_line = Line(
+                    map_reader=self,
+                    line_id="-" + line_id,
+                    from_int=str(end),
+                    to_int=str(start),
+                    fow=FOW(fow),
+                    frc=FRC(frc),
+                    length=length,
+                    geometry=ls.reverse(),
+                    buffer=self.buffer,
+                )
                 self.lines[rev_line.id] = rev_line
                 self.all_lines.add(rev_line)
 
@@ -229,29 +297,41 @@ class BufferReader(MapReader):
         else:
             self.incoming_lines[str(line.end_node.node_id)] = {line}
 
-    def match(self, config: Optional[Config] = None) -> Optional[MapObjects]:
+    def match(
+        self,
+        config: Optional[Config] = None,
+        observer: Optional[DecoderObserver] = None
+    ) -> Optional[MapObjects]:
         """
-            Decode an OpenLR binary string
+        Decode an OpenLR binary string
 
-            Arguments:
-                config:Optional[Config]
-                    configuration object which overrides instance level config
-                    Default: None
+        Arguments:
+            observer: Optional DecoderObser instance to monitor decoding
+            config:Optional[Config]
+                configuration object which overrides instance level config
+                Default: None
 
-            Returns:
-                A registered subtype of MapObjects( currently Coordinates, LineLocation,
-                PointAlongLine, or PoiWithAccessPoint)
+        Returns:
+            A registered subtype of MapObjects( currently Coordinates, LineLocation,
+            PointAlongLine, or PoiWithAccessPoint)
 
-            Raises:
-                LRDecodeError:
-                    Raised if the decoding process was not successful.
+        Raises:
+            LRDecodeError:
+                Raised if the decoding process was not successful.
         """
         if config is None:
             config = self.config
         try:
-            return cast(MapObjects,
-                        decode(reference=self.loc_ref, reader=cast(MapReader, self), config=cast(Config, config),
-                               geo_tool=self.geo_tool))
+            return cast(
+                MapObjects,
+                decode(
+                    reference=self.loc_ref,
+                    reader=cast(MapReader, self),
+                    observer=observer,
+                    config=cast(Config, config),
+                    geo_tool=self.geo_tool,
+                ),
+            )
         except Exception as e:
             logging.info(f"Error during initial decode of {self.loc_ref}: {e}")
             return None
@@ -261,12 +341,13 @@ class BufferReader(MapReader):
         line = self.lines.get(line_id)
         if line is not None:
             return line
-        raise WebToolMapException(f"Line {line_id} should have been in the cache but was not found")
+        raise WebToolMapException(
+            f"Line {line_id} should have been in the cache but was not found"
+        )
 
     def get_lines(self) -> Iterable[Line]:
         logging.warning("Unimplemented function get_lines() invoked in buffer_reader")
         return []
-        
 
     def get_linecount(self) -> int:
         return len(self.lines)
@@ -275,7 +356,9 @@ class BufferReader(MapReader):
         n = self.nodes.get(node_id)
         if n is not None:
             return n
-        raise WebToolMapException(f"Line {node_id} should have been in the cache but was not found")
+        raise WebToolMapException(
+            f"Line {node_id} should have been in the cache but was not found"
+        )
 
     def get_nodes(self) -> Iterable[Node]:
         logging.warning("Unimplemented function get_lines() invoked in buffer_reader")
@@ -285,11 +368,27 @@ class BufferReader(MapReader):
         return len(self.nodes)
 
     def find_nodes_close_to(self, coord: Coordinates, dist: float) -> Iterable[Node]:
-        return [node for node in self.nodes.values() if node.contained_in_buffer and distance(coord, node.coordinates) < dist]
+        return [
+            node
+            for node in self.nodes.values()
+            if node.contained_in_buffer and distance(coord, node.coordinates) < dist
+        ]
 
     def find_lines_close_to(self, coord: Coordinates, dist: float) -> Iterable[Line]:
         # allow lines that are not contained in the buffer if they are being considered for the first or last lrp
-        if (self.loc_ref.points[0][0] == coord[0] and self.loc_ref.points[0][1] == coord[1]) or (self.loc_ref.points[-1][0] == coord[0] and self.loc_ref.points[-1][1] == coord[1]):
-            return [line for line in self.lines.values() if line.distance_to(coord) < dist]
+        if (
+            self.loc_ref.points[0][0] == coord[0]
+            and self.loc_ref.points[0][1] == coord[1]
+        ) or (
+            self.loc_ref.points[-1][0] == coord[0]
+            and self.loc_ref.points[-1][1] == coord[1]
+        ):
+            return [
+                line for line in self.lines.values() if line.distance_to(coord) < dist
+            ]
         else:
-            return [line for line in self.lines.values() if line.contained_in_buffer and line.distance_to(coord) < dist]
+            return [
+                line
+                for line in self.lines.values()
+                if line.contained_in_buffer and line.distance_to(coord) < dist
+            ]

@@ -19,6 +19,7 @@ from .decoder_configs import (
     IgnorePathLength,
     IgnoreBearing,
 )
+from .odat_observer import CandidateCollector
 
 
 class Analyzer:
@@ -59,7 +60,8 @@ class Analyzer:
         if self.map_bounds and not self.map_bounds.covers(ls):
             return AnalysisResult.OUTSIDE_MAP_BOUNDS, 0.0
 
-        decode_result: MapObjects = self.map_reader.match(olr)
+        observer = CandidateCollector()
+        decode_result: MapObjects = self.map_reader.match(olr, observer=observer)
         if decode_result is not None:
             if isinstance(decode_result, LineLocation):
                 buffered_ls: Polygon = buffer_wgs84_geometry(

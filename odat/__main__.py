@@ -21,7 +21,7 @@ from .analyzer import Analyzer
 
 
 def build_results_table(results: Dict[str, Set[str]], count: int) -> Table:
-    table = Table(title="OpenLR decoding analysis results")
+    table = Table(title="ODAT analysis summary")
 
     table.add_column("Result", justify="right", style="cyan", no_wrap=True)
     table.add_column("Count", style="magenta")
@@ -71,7 +71,7 @@ def print_results(
 
     panel = Panel.fit(
         Columns([results_table, stats_table]),
-        width=180,
+        # width=180,
         title="OpenLR decoding analysis tool result summary",
         border_style="red",
         title_align="left",
