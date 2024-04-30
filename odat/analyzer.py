@@ -157,15 +157,15 @@ class Analyzer:
         decoded_ls = self.build_decoded_ls(location)
         return location, decoded_ls, observer
 
-    def analyze(self, olr: str, ls: LineString) -> Tuple[AnalysisResult, float]:
+    def analyze(self, olr: str, ls: LineString) -> Tuple[str, AnalysisResult, float]:
         """Analyze a location reference against a map"""
         logging.debug("Beginning analysis of OpenLR %s", olr)
         if self.map_bounds and not self.map_bounds.covers(ls):
-            return AnalysisResult.OUTSIDE_MAP_BOUNDS, 0.0
+            return olr, AnalysisResult.OUTSIDE_MAP_BOUNDS, 0.0
 
         loc_ref = binary_decode(olr)
         if not isinstance(loc_ref, LineLocationReference):
-            return AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
+            return olr, AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
 
         match self.match_location(loc_ref):
             case (line_location, decoded_ls, observer):
@@ -173,13 +173,14 @@ class Analyzer:
                     ls, Point(ls.coords[0]), self.buffer_radius
                 )
                 if buffered_ls.covers(decoded_ls):
-                    return AnalysisResult.OK, 1.0
+                    return olr, AnalysisResult.OK, 1.0
                 else:
                     percentage_within_buffer = (
                         intersection(buffered_ls, decoded_ls).length / decoded_ls.length
                     )
                     if line_location.p_off > 0 or line_location.n_off > 0:
                         return (
+                            olr,
                             self.adjust_locref_and_match(
                                 loc_ref,
                                 line_location,
@@ -191,6 +192,7 @@ class Analyzer:
                         )
                     else:
                         return (
+                            olr,
                             self.analyze_within_buffer(
                                 loc_ref, line_location, buffered_ls, observer
                             ),
@@ -202,11 +204,12 @@ class Analyzer:
                 )
                 buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
                 return (
+                    olr,
                     self.determine_restricted_decoding_failure_cause(buffer_map_reader),
                     0.0,
                 )
             case MatchResult.UNSUPPORTED_LOCATION_TYPE:
-                return AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
+                return olr,AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
 
     def adjust_locref_and_match(
         self,
