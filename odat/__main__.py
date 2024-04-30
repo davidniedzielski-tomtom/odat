@@ -34,24 +34,31 @@ def build_results_table(results: Dict[str, Set[str]], count: int) -> Table:
         table.add_row(
             str(k),
             str(len(v)),
-            f"{100.0 * len(v) / count: .02f}%",
-            f"{100.0 * (reduce(lambda accum,x: accum+x[1],v,0.0)) / len(v): .02f}%"
+            f"{(100.0 * len(v) / count) if count > 0 else 0: .02f}%",
+            f"{(100.0 * (reduce(lambda accum,x: accum+x[1],v,0.0)) / len(v)) if len(v) > 0 else 0: .02f}%",
         )
 
     return table
 
 
-def build_stats_table(total_frac: float,
-                      count: int,
-                      elapsed: float,
-                      map_bounds_time: float,
-                      analysis_time: float) -> Table:
+def build_stats_table(
+    total_frac: float,
+    count: int,
+    elapsed: float,
+    map_bounds_time: float,
+    analysis_time: float,
+) -> Table:
     table = Table(title="Run statistics")
     table.show_header = False
 
     table.add_row("OpenLRs processed", str(count))
-    table.add_row("Average % within buffer", f"{100.0 * total_frac / count:.02f}%")
-    table.add_row("Map boundary calculation time", f"{map_bounds_time / 1_000_000_000:.04f} secs")
+    table.add_row(
+        "Average % within buffer",
+        f"{(100.0 * total_frac / count) if count > 0 else 0:.02f}%",
+    )
+    table.add_row(
+        "Map boundary calculation time", f"{map_bounds_time / 1_000_000_000:.04f} secs"
+    )
     table.add_row("OpenLR analysis time", f"{analysis_time / 1_000_000_000:.04f} secs")
     table.add_row("Total elapsed time", f"{elapsed / 1_000_000_000:.04f} secs")
 
@@ -59,15 +66,17 @@ def build_stats_table(total_frac: float,
 
 
 def print_results(
-        results: Dict[str, Set[str]],
-        count: int,
-        total_frac: float,
-        elapsed: float,
-        map_bounds_time: float,
-        analysis_time: float
+    results: Dict[str, Set[str]],
+    count: int,
+    total_frac: float,
+    elapsed: float,
+    map_bounds_time: float,
+    analysis_time: float,
 ):
     results_table = build_results_table(results, count)
-    stats_table = build_stats_table(total_frac, count, elapsed, map_bounds_time, analysis_time)
+    stats_table = build_stats_table(
+        total_frac, count, elapsed, map_bounds_time, analysis_time
+    )
 
     panel = Panel.fit(
         Columns([results_table, stats_table]),
@@ -142,6 +151,8 @@ def parse_cli_args():
         ">= 1.0 means simple BBOX)",
     )
 
+    p.add("--num_threads", env_var="ODAT_NUM_THREADS", help="Number of parallel threads to use")
+
     p.add("--lrp_radius", env_var="ODAT_LRP_RADIUS", help="Search radius around LRP")
 
     p.add(
@@ -200,7 +211,6 @@ def main():
     geo_tool = get_geo_tool(options.target_crs)
     config = get_config(options.decoder_config)
 
-
     rdr = TomTomMapReaderSQLite(
         db_filename=options.db,
         mod_spatialite=options.mod_spatialite,
@@ -218,12 +228,14 @@ def main():
         map_reader=rdr,
         buffer_radius=int(options.buffer),
         lrp_radius=int(options.lrp_radius),
-        map_bounds=map_bounds
+        map_bounds=map_bounds,
     )
 
     count: int = 0
     total_frac: float = 0.0
-    results: Dict[AnalysisResult, Set[Tuple[str,float]]] = {k: set() for k in list(AnalysisResult)}
+    results: Dict[AnalysisResult, Set[Tuple[str, float]]] = {
+        k: set() for k in list(AnalysisResult)
+    }
 
     analysis_start = perf_counter_ns()
     with open(options.input) as inj:
@@ -240,11 +252,14 @@ def main():
                         (f"{olr} : Duplicate-{count}", 0.0)
                     )
                 else:
-                    results[res].add((olr,frac))
+                    results[res].add((olr, frac))
                     total_frac += frac
                 count += 1
             except Exception as e:
-                results[AnalysisResult.UNKNOWN_ERROR].add((f"{olr} : Error-{e}-{count}", 0.0))
+                print(olr, e)
+                results[AnalysisResult.UNKNOWN_ERROR].add(
+                    (f"{olr} : Error-{e}-{count}", 0.0)
+                )
 
     analysis_time = perf_counter_ns() - analysis_start
     new_r = {

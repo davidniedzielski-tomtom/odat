@@ -18,7 +18,8 @@ class MyTestCase(unittest.TestCase):
     def setUp(self):
         self.test_data = {}
         # with open("/Users/dave/projects/python/openlr/data/lux-orbis-flow.json") as inj:
-        with open("/Users/dave/projects/python/openlr/data/hris/umd-mnr-flow.json") as inj:
+        # with open("/Users/dave/projects/python/openlr/data/hris/umd-mnr-flow.json") as inj:
+        with open("/Users/dave/projects/python/openlr/data/isr-orbis-flow.json") as inj:
             j = json.loads(inj.read())
             for loc in j['locations']:
                 geom1 = loc['geometry']
@@ -164,10 +165,10 @@ class MyTestCase(unittest.TestCase):
         with cProfile.Profile() as profile:
             results: Dict[AnalysisResult, Set[str]] = {}
             rdr = TomTomMapReaderSQLite(
-                db_filename="/Users/dave/projects/python/openlr/data/lux-osm.db",
+                db_filename="/Users/dave/projects/python/openlr/data/isr-mnr.db",
                 # db_filename="/Users/dave/projects/python/openlr/data/lux-orbis.db",
                 # db_filename="/Users/dave/projects/python/openlr/data/hris/umd-orbis.db",
-                mod_spatialite="/opt/homebrew/anaconda3/envs/openlr/lib/mod_spatialite",
+                mod_spatialite="/opt/homebrew/lib/mod_spatialite",
                 lines_table="links",
                 nodes_table="junctions",
                 geo_tool=GeoTool_4326(),
