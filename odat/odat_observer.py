@@ -143,6 +143,11 @@ class ScoreCollector(DecoderObserver):
         self.bear_score = 0.0
         self.total_score = 0.0
 
+        self.frc_reject: bool = False
+        self.bear_reject: bool = False
+        self.score_reject = False
+
+
     """Abstract class representing an observer to the OpenLR decoding process"""
 
     def on_candidate_found(self, lrp: LocationReferencePoint, candidate: Candidate):
@@ -153,7 +158,7 @@ class ScoreCollector(DecoderObserver):
             self, lrp: LocationReferencePoint, candidate: Candidate, reason: str
     ):
         """Called by the decoder when a candidate for a location reference point is rejected"""
-        pass
+        self.score_reject = True
 
     def on_candidate_rejected_bearing(
             self,
@@ -166,7 +171,7 @@ class ScoreCollector(DecoderObserver):
         """
         Called by the decoder when a candidate for a location reference point is rejected due to excessive bearing difference
         """
-        pass
+        self.bear_reject = True
 
     def on_candidate_score(
             self,
@@ -194,7 +199,7 @@ class ScoreCollector(DecoderObserver):
         """
         Called by the decoder when a candidate for a location reference point is rejected due to incompatible FRC
         """
-        pass
+        self.frc_reject = True
 
     def on_no_candidates_found(self, lrp: LocationReferencePoint):
         """Called by the decoder when it finds no candidates for a location reference point"""

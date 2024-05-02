@@ -1,11 +1,11 @@
 import geoutils
 from openlr import FRC, FOW
-from shapely import LineString, Polygon, Point
 from openlr_dereferencer.maps import Line as AbstractLine
-
 from pyproj import Geod
+from shapely import LineString, Polygon, Point
 
 GEOD = Geod(ellps="WGS84")
+
 
 class Line(AbstractLine):
 
@@ -66,4 +66,8 @@ class Line(AbstractLine):
 
     def distance_to(self, coord) -> float:
         """Returns the distance of this line to `coord` in meters"""
+        # if (self.geometry.coords[0] == coord or self.geometry.coords[-1] == coord) or (
+        #     self.geometry.coords[0] == self.geometry.coords[-1]
+        # ):
+        #     return 0.0
         return geoutils.distance_between(self.geometry, Point(coord.lon, coord.lat))

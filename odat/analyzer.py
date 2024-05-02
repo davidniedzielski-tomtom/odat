@@ -209,7 +209,7 @@ class Analyzer:
                     0.0,
                 )
             case MatchResult.UNSUPPORTED_LOCATION_TYPE:
-                return olr,AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
+                return olr, AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
 
     def adjust_locref_and_match(
         self,
@@ -272,17 +272,17 @@ class Analyzer:
     ) -> AnalysisResult:
         # We're here because we couldn't find a path in the restricted target map
 
-        if not buffer_map_reader.match(AnyPath):
+        if not buffer_map_reader.match(config=AnyPath):
             return AnalysisResult.MISSING_OR_MISCONFIGURED_ROAD
-        if buffer_map_reader.match(IgnoreFRC):
+        if buffer_map_reader.match(config=IgnoreFRC):
             return AnalysisResult.FRC_MISMATCH
-        if buffer_map_reader.match(IgnoreFOW):
+        if buffer_map_reader.match(config=IgnoreFOW):
             return AnalysisResult.FOW_MISMATCH
-        if buffer_map_reader.match(IgnorePathLength):
+        if buffer_map_reader.match(config=IgnorePathLength):
             return AnalysisResult.PATH_LENGTH_MISMATCH
-        if buffer_map_reader.match(IgnoreBearing):
+        if buffer_map_reader.match(config=IgnoreBearing):
             return AnalysisResult.BEARING_MISMATCH
-        return AnalysisResult.INCORRECT_FIRST_OR_LAST_LRP_PLACEMENT
+        return AnalysisResult.MULTIPLE_ATTRIBUTE_MISMATCHES
 
     def diagnose_score(
         self,
@@ -293,7 +293,7 @@ class Analyzer:
     ) -> AnalysisResult:
         # assert outside.score >= inside.score
         out_score_collector = ScoreCollector()
-        oc = list(
+        list(
             make_candidates(
                 lrp,
                 outside.line,
@@ -302,9 +302,9 @@ class Analyzer:
                 is_last,
                 self.map_reader.geo_tool,
             )
-        )[0]
+        )
         in_score_collector = ScoreCollector()
-        ic = list(
+        list(
             make_candidates(
                 lrp,
                 inside.line,
@@ -313,7 +313,14 @@ class Analyzer:
                 is_last,
                 self.map_reader.geo_tool,
             )
-        )[0]
+        )
+
+        if in_score_collector.frc_reject:
+            return AnalysisResult.BETTER_FRC_FOUND
+        if in_score_collector.bear_reject:
+            return AnalysisResult.BETTER_BEARING_FOUND
+        if in_score_collector.score_reject:
+            return AnalysisResult.BETTER_SCORE_FOUND
 
         components = [0.0, 0.0, 0.0, 0.0]
         components[0] = self.map_reader.config.geo_weight * (
@@ -347,7 +354,9 @@ class Analyzer:
         inside_obs: CandidateCollector,
     ) -> AnalysisResult:
         assert len(outside_obs.candidates) == len(inside_obs.candidates)
-        outside_pairs = [outside_obs.candidates[i] for i in sorted(outside_obs.candidates)]
+        outside_pairs = [
+            outside_obs.candidates[i] for i in sorted(outside_obs.candidates)
+        ]
         inside_pairs = [inside_obs.candidates[i] for i in sorted(inside_obs.candidates)]
 
         if (outside_pairs[0][1].line.line_id != inside_pairs[0][1].line.line_id) and (

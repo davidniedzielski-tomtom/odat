@@ -61,6 +61,7 @@ RELAXED_TOLERATED_LFRC: Dict[FRC, FRC] = {
 
 # A strict configuration
 StrictConfig = Config(
+    candidate_threshold=0,
     max_dnp_deviation=0.1,
     tolerated_dnp_dev=30,
     tolerated_lfrc=STRICT_TOLERATED_LFRC,

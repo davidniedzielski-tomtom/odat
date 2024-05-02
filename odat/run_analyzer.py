@@ -1,13 +1,11 @@
 import json
 import logging
-import timeit
 from multiprocessing import Queue
 from time import perf_counter_ns
 from typing import Dict, Set, Tuple
 
 from functools import reduce
 
-import configargparse
 from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
@@ -87,7 +85,7 @@ def print_results(
     panel = Panel.fit(
         Columns([results_table, stats_table]),
         # width=180,
-        title="OpenLR decoding analysis tool result summary",
+        title="ODAT Results",
         border_style="red",
         title_align="left",
         padding=(1, 2),
@@ -157,7 +155,9 @@ def get_map_bounds(map_reader: TomTomMapReaderSQLite, concavehull_ratio: float):
     return map_reader.get_map_bounds(concavehull_ratio)
 
 
-def worker(id: int, q_in: Queue, q_out: Queue, options, map_bounds: Polygon, config, geo_tool):
+def worker(
+    id: int, q_in: Queue, q_out: Queue, options, map_bounds: Polygon, config, geo_tool, verbose: bool
+):
     """
     Each worker takes a record off the queue and attempts to decode it.  If it successful, it places a tuple
     containing the code as well as the decoded coordinates on the writer input queue.  If it is unsuccessful,
@@ -165,7 +165,9 @@ def worker(id: int, q_in: Queue, q_out: Queue, options, map_bounds: Polygon, con
     places a POISON_PILL_MSG message on the writer queue and terminates.
     """
 
+    setup_logging(verbose)
     error_count = 0
+
     def enqueue(olr, res: AnalysisResult, frac: float) -> None:
         q_out.put((olr, res, frac))
 
@@ -195,11 +197,15 @@ def worker(id: int, q_in: Queue, q_out: Queue, options, map_bounds: Polygon, con
             enqueue(olr, res, frac)
         except Exception as e:
             logging.error(f"Error during analysis of {olr}: {e}")
-            enqueue( f"{olr} : Error-{e}-{id}-{error_count}", AnalysisResult.UNKNOWN_ERROR, 0.0)
+            enqueue(
+                f"{olr} : Error-{e}-{id}-{error_count}",
+                AnalysisResult.UNKNOWN_ERROR,
+                0.0,
+            )
             error_count += 1
         msg = q_in.get()
     q_out.put(msg)
-    logging.info(f"Worker {id} shutting down")
+    logging.debug(f"Worker {id} shutting down")
 
 
 def run_parallel_analyzer(options):
@@ -217,11 +223,9 @@ def run_parallel_analyzer(options):
     q_out = ctx.Queue(0)
 
     # spawn the loader, passing it the worker queue to fill
-    loader = ctx.Process(target=load_queue, args=(q_in,options))
+    loader = ctx.Process(target=load_queue, args=(q_in, options))
     loader.start()
     active_workers = 0
-    responses_received = 0
-    start_time = timeit.default_timer()
 
     rdr = TomTomMapReaderSQLite(
         db_filename=options.db,
@@ -237,7 +241,10 @@ def run_parallel_analyzer(options):
 
     # spawn the workers
     for i in range(int(options.num_threads)):
-        p = ctx.Process(target=worker, args=(i, q_in, q_out, options, map_bounds, config, geo_tool))
+        p = ctx.Process(
+            target=worker,
+            args=(i, q_in, q_out, options, map_bounds, config, geo_tool, options.verbose),
+        )
         p.start()
         workers.append(p)
         active_workers += 1
@@ -255,11 +262,11 @@ def run_parallel_analyzer(options):
             msg = q_out.get()
             if msg == POISON_PILL_MSG:
                 # Poison pill:  decrement the worker count
-                logging.info("Worker shutdown detected")
+                logging.debug("Worker shutdown detected")
                 active_workers -= 1
             else:
                 olr, res, frac = msg
-                if (olr,frac) in results[res]:
+                if (olr, frac) in results[res]:
                     results[AnalysisResult.DUPLICATE_OPENLR_CODE].add(
                         (f"{olr} : Duplicate-{count}", 0.0)
                     )

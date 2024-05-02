@@ -46,6 +46,16 @@ def parse_cli_args():
         help="Path to mod_spatialite library",
     )
     p.add(
+        "--output_dir",
+        env_var="ODAT_OUTPUT_DIR",
+        help="Directory to write output files",
+    )
+    p.add(
+        "--output_file",
+        env_var="ODAT_OUTPUT_FILE",
+        help="File to write output JSON",
+    )
+    p.add(
         "--target_crs",
         env_var="ODAT_TARGET_CRS",
         help="Target CRS for decoding: i.e. EPSG:4326",
