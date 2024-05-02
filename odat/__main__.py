@@ -1,5 +1,6 @@
 import configargparse
 from odat.run_analyzer import run_parallel_analyzer
+from odat.options import Options
 
 
 def parse_cli_args():
@@ -51,11 +52,6 @@ def parse_cli_args():
         help="Directory to write output files",
     )
     p.add(
-        "--output_file",
-        env_var="ODAT_OUTPUT_FILE",
-        help="File to write output JSON",
-    )
-    p.add(
         "--target_crs",
         env_var="ODAT_TARGET_CRS",
         help="Target CRS for decoding: i.e. EPSG:4326",
@@ -91,7 +87,23 @@ def parse_cli_args():
     return p.parse_args()
 
 def main():
-    options = parse_cli_args()
+    _opt = parse_cli_args()
+    options = Options(
+        db=_opt.db,
+        input=_opt.input,
+        lines_table=_opt.lines_table,
+        nodes_table=_opt.nodes_table,
+        decoder_config=_opt.decoder_config,
+        mod_spatialite=_opt.mod_spatialite,
+        output_dir=_opt.output_dir,
+        target_crs=_opt.target_crs,
+        concavehull_ratio=_opt.concavehull_ratio,
+        buffer=_opt.buffer,
+        lrp_radius=_opt.lrp_radius,
+        num_threads=_opt.num_threads,
+        verbose=_opt.verbose,
+    )
+
     run_parallel_analyzer(options)
 
 
