@@ -113,7 +113,9 @@ def load_queue(q, options):
                 ls = wkb.loads(geom1, hex=True)
                 assert isinstance(ls, LineString)
                 olr: str = loc["locationReference"]
-                q.put((olr, ls))
+                category: str = loc["category"]
+                frc: int = int(loc["frc"])
+                q.put((olr, ls, category, frc))
             except Exception as e:
                 logging.warning(f"Error loading {loc['locationReference']}: {e}")
 
@@ -172,8 +174,8 @@ def worker(
     error_count = 0
     olr = ""
 
-    def enqueue(olr, res: AnalysisResult, frac: float) -> None:
-        q_out.put((olr, res, frac))
+    def enqueue(olr:str, category: str, frc: int, res: AnalysisResult, frac: float) -> None:
+        q_out.put((olr, category, frc, res, frac))
 
     rdr = TomTomMapReaderSQLite(
         db_filename=options.db,
@@ -196,9 +198,9 @@ def worker(
 
     while msg != POISON_PILL_MSG:
         try:
-            olr, ls = msg
+            olr, ls, category, frc = msg
             olr, res, frac = dat.analyze(olr, ls)
-            enqueue(olr, res, frac)
+            enqueue(olr, category, frc, res, frac)
         except Exception as e:
             logging.error(f"Error during analysis of {olr}: {e}")
             enqueue(
@@ -277,7 +279,6 @@ def run_parallel_analyzer(options: Options):
         "num_threads": options.num_threads,
     }
     metadata = json.dumps(metadict)
-    print(metadata)
     first = True
 
     with open(f"{options.output_dir}/{output_filename}.json", "wt") as outf:
@@ -291,9 +292,9 @@ def run_parallel_analyzer(options: Options):
                     logging.debug("Worker shutdown detected")
                     active_workers -= 1
                 else:
-                    olr, res, frac = msg
+                    olr, category, frc, res, frac = msg
                     res = str(res).removeprefix("AnalysisResult.")
-                    rec = json.dumps({"locationReference": olr, "result": res, "fraction": frac})
+                    rec = json.dumps({"locationReference": olr, "category": category, "frc": frc, "result": res, "fraction": frac})
                     outf.write(f"{'' if first else ','}{rec}")
                     first = False
 
