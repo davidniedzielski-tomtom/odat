@@ -3,6 +3,7 @@ import logging
 from multiprocessing import Queue
 from time import perf_counter_ns
 from typing import Dict, Set, Tuple
+import time
 
 from functools import reduce
 
@@ -21,10 +22,12 @@ from .analyzer import Analyzer
 
 import multiprocessing as mp
 
+from .options import Options
+
 POISON_PILL_MSG = "__DONE__"
 
 
-def build_results_table(results: Dict[str, Set[str]], count: int) -> Table:
+def build_results_table(results: Dict[str, Set[Tuple[str, float]]], count: int) -> Table:
     table = Table(title="ODAT analysis summary")
 
     table.add_column("Result", justify="right", style="cyan", no_wrap=True)
@@ -70,7 +73,7 @@ def build_stats_table(
 
 
 def print_results(
-    results: Dict[str, Set[str]],
+    results: Dict[str, Set[Tuple[str,float]]],
     count: int,
     total_frac: float,
     elapsed: float,
@@ -167,6 +170,7 @@ def worker(
 
     setup_logging(verbose)
     error_count = 0
+    olr = ""
 
     def enqueue(olr, res: AnalysisResult, frac: float) -> None:
         q_out.put((olr, res, frac))
@@ -208,7 +212,7 @@ def worker(
     logging.debug(f"Worker {id} shutting down")
 
 
-def run_parallel_analyzer(options):
+def run_parallel_analyzer(options: Options):
 
     start = perf_counter_ns()
 
@@ -251,37 +255,65 @@ def run_parallel_analyzer(options):
 
     count: int = 0
     total_frac: float = 0.0
-    results: Dict[AnalysisResult, Set[Tuple[str, float]]] = {
-        k: set() for k in list(AnalysisResult)
+    results: Dict[str, Set[Tuple[str, float]]] = {
+        str(k).removeprefix("AnalysisResult."): set() for k in list(AnalysisResult)
     }
 
     analysis_start = perf_counter_ns()
+    output_filename = time.strftime("%Y%m%d-%H%M%S")
 
-    while active_workers > 0:
-        try:
-            msg = q_out.get()
-            if msg == POISON_PILL_MSG:
-                # Poison pill:  decrement the worker count
-                logging.debug("Worker shutdown detected")
-                active_workers -= 1
-            else:
-                olr, res, frac = msg
-                if (olr, frac) in results[res]:
-                    results[AnalysisResult.DUPLICATE_OPENLR_CODE].add(
-                        (f"{olr} : Duplicate-{count}", 0.0)
-                    )
+    metadict = {
+        "input_file": f"{str(options.input)}",
+        "output_file": f"{str(output_filename)}.json",
+        "buffer_radius": options.buffer,
+        "lrp_radius": options.lrp_radius,
+        "decoder_config": options.decoder_config,
+        "target_crs": options.target_crs,
+        "concavehull_ratio": options.concavehull_ratio,
+        "db": f"{str(options.db)}",
+        "mod_spatialite": options.mod_spatialite,
+        "lines_table": options.lines_table,
+        "nodes_table": options.nodes_table,
+        "num_threads": options.num_threads,
+    }
+    metadata = json.dumps(metadict)
+    print(metadata)
+    first = True
+
+    with open(f"{options.output_dir}/{output_filename}.json", "wt") as outf:
+        outf.write(f"""{{"metadata":{metadata}, "locations":[""")
+
+        while active_workers > 0:
+            try:
+                msg = q_out.get()
+                if msg == POISON_PILL_MSG:
+                    # Poison pill:  decrement the worker count
+                    logging.debug("Worker shutdown detected")
+                    active_workers -= 1
                 else:
-                    results[res].add((olr, frac))
-                    total_frac += frac
-                    count += 1
-        except Exception as e:
-            results[AnalysisResult.UNKNOWN_ERROR].add(
-                (f"{olr} : Error-{e}-{count}", 0.0)
-            )
+                    olr, res, frac = msg
+                    res = str(res).removeprefix("AnalysisResult.")
+                    rec = json.dumps({"locationReference": olr, "result": res, "fraction": frac})
+                    outf.write(f"{'' if first else ','}{rec}")
+                    first = False
+
+                    if (olr, frac) in results[res]:
+                        results["DUPLICATE_OPENLR_CODE"].add(
+                            (f"{olr} : Duplicate-{count}", 0.0)
+                        )
+                    else:
+                        results[res].add((olr, frac))
+                        total_frac += frac
+                        count += 1
+            except Exception as e:
+                results["UNKNOWN_ERROR"].add(
+                    (f"{olr} : Error-{e}-{count}", 0.0)
+                )
+        outf.write("]}")
 
     analysis_time = perf_counter_ns() - analysis_start
     new_r = {
-        str(k).removeprefix("AnalysisResult."): v
+        k: v
         for k, v in sorted(results.items(), key=lambda x: len(x[1]), reverse=True)
     }
     end = perf_counter_ns()

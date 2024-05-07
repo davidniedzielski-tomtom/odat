@@ -161,8 +161,8 @@ class MyTestCase(unittest.TestCase):
         rdr = TomTomMapReaderSQLite(
             # db_filename="/Users/dave/projects/python/openlr/data/lux-osm.db",
             # db_filename="/Users/dave/projects/python/openlr/data/lux-orbis.db",
-            #db_filename="/Users/dave/projects/python/openlr/data/hris/umd-orbis.db",
-            db_filename="/Users/dave/projects/python/openlr/data/deu-orbis.db",
+            db_filename="/Users/dave/projects/python/openlr/data/hris/umd-orbis.db",
+            #db_filename="/Users/dave/projects/python/openlr/data/deu-orbis.db",
             mod_spatialite="/opt/homebrew/anaconda3/envs/openlr/lib/mod_spatialite",
             lines_table="links",
             nodes_table="junctions",
