@@ -111,21 +111,33 @@ class Analyzer:
 
     @staticmethod
     def build_decoded_ls(decode_result: LineLocation) -> LineString:
-        tmp = geoutils.join_lines([line.geometry for line in decode_result.lines])
-        if decode_result.p_off > 0:
-            _, front = split_line(tmp, decode_result.p_off)
-            if front is None:
-                return LineString([tmp.coords[-1], tmp.coords[-1]])
+        tmp: LineString = geoutils.join_lines([line.geometry for line in decode_result.lines])
+        pos_off = decode_result.p_off
+        neg_off = decode_result.n_off
+        if pos_off > 0 or neg_off > 0:
+            ls_length: float = sum([line.length for line in decode_result.lines])
+            if ls_length - pos_off - neg_off < 1.0:
+                # The decoded line is shorter than the sum of the offsets
+                # Adjusts the offsets such that the line is at least 1 meter long
+                additional_length = max(int(pos_off + neg_off - ls_length ) / 2, 1)
+                pos_off = max(pos_off - additional_length, 0)
+                neg_off = max(neg_off - additional_length, 0)
+            if pos_off > 0:
+                _, front = split_line(tmp, pos_off)
+                if front is None:
+                    return LineString([tmp.coords[-1], tmp.coords[-1]])
+            else:
+                front = tmp
+            if neg_off > 0:
+                _, back = split_line(front.reverse(), neg_off)
+                if back is None:
+                    return LineString([front.coords[0], front.coords[0]])
+                back = back.reverse()
+            else:
+                back = front
+            return back
         else:
-            front = tmp
-        if decode_result.n_off > 0:
-            _, back = split_line(front.reverse(), decode_result.n_off)
-            if back is None:
-                return LineString([front.coords[0], front.coords[0]])
-            back = back.reverse()
-        else:
-            back = front
-        return back
+            return tmp
 
     def create_buffer_reader(
         self, loc_ref: LineLocationReference, buffered_ls: Polygon
