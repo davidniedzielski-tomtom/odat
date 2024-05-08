@@ -223,9 +223,9 @@ class MyTestCase(unittest.TestCase):
 
     def test_1(self):
         single(
-            test_olr="CwmDwSRajwsloSNBEmgKMwE=",
-            input_file="/Users/dave/projects/python/openlr/data/deu-flow.json",
-            db_file="/Users/dave/projects/python/openlr/data/deu-orbis.db",
+            test_olr="CwUClSL9WgEIhBWeFSUBdbtE",
+            input_file="/Users/dave/projects/python/openlr/data/deu-incident.json",
+            db_file="/Users/dave/projects/python/openlr/data/deu-mnr-dseg.db",
         )
 
 

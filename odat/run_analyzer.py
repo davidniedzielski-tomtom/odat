@@ -1,5 +1,6 @@
 import json
 import logging
+import sqlite3
 from multiprocessing import Queue
 from time import perf_counter_ns
 from typing import Dict, Set, Tuple
@@ -42,18 +43,18 @@ def build_results_table(results: Dict[str, Set[Tuple[str, float]]], count: int) 
             str(k),
             str(len(v)),
             f"{(100.0 * len(v) / count) if count > 0 else 0: .02f}%",
-            f"{(100.0 * (reduce(lambda accum,x: accum+x[1],v,0.0)) / len(v)) if len(v) > 0 else 0: .02f}%",
+            f"{(100.0 * (reduce(lambda accum, x: accum + x[1], v, 0.0)) / len(v)) if len(v) > 0 else 0: .02f}%",
         )
 
     return table
 
 
 def build_stats_table(
-    total_frac: float,
-    count: int,
-    elapsed: float,
-    map_bounds_time: float,
-    analysis_time: float,
+        total_frac: float,
+        count: int,
+        elapsed: float,
+        map_bounds_time: float,
+        analysis_time: float,
 ) -> Table:
     table = Table(title="Run statistics")
     table.show_header = False
@@ -73,12 +74,12 @@ def build_stats_table(
 
 
 def print_results(
-    results: Dict[str, Set[Tuple[str,float]]],
-    count: int,
-    total_frac: float,
-    elapsed: float,
-    map_bounds_time: float,
-    analysis_time: float,
+        results: Dict[str, Set[Tuple[str, float]]],
+        count: int,
+        total_frac: float,
+        elapsed: float,
+        map_bounds_time: float,
+        analysis_time: float,
 ):
     results_table = build_results_table(results, count)
     stats_table = build_stats_table(
@@ -157,11 +158,16 @@ def get_config(config: str):
 
 
 def get_map_bounds(map_reader: TomTomMapReaderSQLite, concavehull_ratio: float):
-    return map_reader.get_map_bounds(concavehull_ratio)
+    try:
+        return map_reader.get_map_bounds(concavehull_ratio)
+    except sqlite3.DataError as sde:
+        logging.warning(f"Unable to calculate concave map bounds: {sde}. "
+                        "Re-trying with convex hull (MISSING_OR_MISCONFIGURED_ROAD counts may be inaccurate).")
+        return map_reader.get_map_bounds(1.0)
 
 
 def worker(
-    id: int, q_in: Queue, q_out: Queue, options, map_bounds: Polygon, config, geo_tool, verbose: bool
+        id: int, q_in: Queue, q_out: Queue, options, map_bounds: Polygon, config, geo_tool, verbose: bool
 ):
     """
     Each worker takes a record off the queue and attempts to decode it.  If it successful, it places a tuple
@@ -174,7 +180,7 @@ def worker(
     error_count = 0
     olr = ""
 
-    def enqueue(olr:str, category: str, frc: int, res: AnalysisResult, frac: float) -> None:
+    def enqueue(olr: str, category: str, frc: int, res: AnalysisResult, frac: float) -> None:
         q_out.put((olr, category, frc, res, frac))
 
     rdr = TomTomMapReaderSQLite(
@@ -215,7 +221,6 @@ def worker(
 
 
 def run_parallel_analyzer(options: Options):
-
     start = perf_counter_ns()
 
     setup_logging(options.verbose)
@@ -294,7 +299,8 @@ def run_parallel_analyzer(options: Options):
                 else:
                     olr, category, frc, res, frac = msg
                     res = str(res).removeprefix("AnalysisResult.")
-                    rec = json.dumps({"locationReference": olr, "category": category, "frc": frc, "result": res, "fraction": frac})
+                    rec = json.dumps(
+                        {"locationReference": olr, "category": category, "frc": frc, "result": res, "fraction": frac})
                     outf.write(f"{'' if first else ','}{rec}")
                     first = False
 
