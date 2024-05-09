@@ -181,7 +181,7 @@ def worker(
     olr = ""
 
     def enqueue(olr: str, category: str, frc: int, res: AnalysisResult, frac: float) -> None:
-        q_out.put((olr, category, frc, res, frac))
+        q_out.put((olr, category, frc, str(res).removeprefix("AnalysisResult."), frac))
 
     rdr = TomTomMapReaderSQLite(
         db_filename=options.db,
@@ -298,7 +298,6 @@ def run_parallel_analyzer(options: Options):
                     active_workers -= 1
                 else:
                     olr, category, frc, res, frac = msg
-                    res = str(res).removeprefix("AnalysisResult.")
                     rec = json.dumps(
                         {"locationReference": olr, "category": category, "frc": frc, "result": res, "fraction": frac})
                     outf.write(f"{'' if first else ','}{rec}")
