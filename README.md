@@ -20,12 +20,20 @@ within the buffer, ODAT checks the placement of the LRPs to verify that they are
 any are placed on lines outside the buffer, then ODAT determines why the external LRP placements were preferable to 
 internal ones. 
 
-Alternatively, if the decoding failed but the location was not completely outside the buffer, ODAT begins an analysis
-of the LRP-to-line placement.  If LRPs were placed on lines not within the buffer, ODAT uses the observer pattern of
-the Python reference implementation to ascertain why the LRPs were placed on those lines instead of the lines within
-the buffer.
-
 In all cases, the results of the analysis are described and categorized by the AnalysisResult enum.
+
+# Running the tool
+The tool is run from the command line with the following command:
+
+```bash
+python -m odat <options>
+```
+
+To get a description of the optional arguments, run:
+
+```bash
+python -m odat --help
+```
 
 # Input
 The tool requires a JSON-encoded source file containing at a minimum a set of OpenLR codes as well as a LineString
