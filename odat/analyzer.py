@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, cast
 
 import geoutils
 from geoutils import buffer_wgs84_geometry, split_line, GeoCoordinates
@@ -28,11 +28,11 @@ from .odat_observer import CandidateCollector, ScoreCollector
 class Analyzer:
 
     def __init__(
-        self,
-        map_reader: TomTomMapReaderSQLite,
-        buffer_radius: int = 20,
-        lrp_radius: int = 20,
-        map_bounds: Optional[Polygon] = None,
+            self,
+            map_reader: TomTomMapReaderSQLite,
+            buffer_radius: int = 20,
+            lrp_radius: int = 20,
+            map_bounds: Optional[Polygon] = None,
     ):
         self.map_reader = map_reader
         self.buffer_radius = buffer_radius
@@ -40,8 +40,67 @@ class Analyzer:
         self.map_bounds = map_bounds
 
     @staticmethod
+    def determine_restricted_decoding_failure_cause(
+            buffer_map_reader: BufferReader,
+    ) -> AnalysisResult:
+        # We're here because we couldn't find a path in the restricted target map
+
+        if not buffer_map_reader.match(config=AnyPath):
+            return AnalysisResult.MISSING_OR_MISCONFIGURED_ROAD
+        if buffer_map_reader.match(config=IgnoreFRC):
+            return AnalysisResult.FRC_MISMATCH
+        if buffer_map_reader.match(config=IgnoreFOW):
+            return AnalysisResult.FOW_MISMATCH
+        if buffer_map_reader.match(config=IgnorePathLength):
+            return AnalysisResult.PATH_LENGTH_MISMATCH
+        if buffer_map_reader.match(config=IgnoreBearing):
+            return AnalysisResult.BEARING_MISMATCH
+        return AnalysisResult.MULTIPLE_ATTRIBUTE_MISMATCHES
+    @staticmethod
+    def build_decoded_ls(decode_result: LineLocation) -> LineString:
+        """
+        Build a LineString from a decoded LineLocation.  If the decoded line has offsets, the LineString will be
+        adjusted to reflect the offsets.  If the sum of the offsets is larger than the line, the offsets will be
+        reduced to ensure that the line is at least 1 meter long.
+
+        Args:
+            decode_result: LineLocation resulting from match operation
+
+        Returns:
+            LineString representing the decoded location
+
+        """
+        ls: LineString = geoutils.join_lines([line.geometry for line in decode_result.lines])
+        if decode_result.p_off > 0.0 or decode_result.n_off > 0.0:
+            pos_off: float = decode_result.p_off
+            neg_off: float = decode_result.n_off
+            ls_length: float = sum([line.length for line in decode_result.lines])
+            if ls_length - pos_off - neg_off < 1.0:
+                # The decoded line is shorter than the sum of the offsets
+                # Adjusts the offsets such that the line is at least 1 meter long
+                additional_length: float = max((pos_off + neg_off - ls_length) / 2.0, 1.0)
+                pos_off = max(pos_off - additional_length, 0)
+                neg_off = max(neg_off - additional_length, 0)
+            if pos_off > 0.0:
+                _, front = split_line(ls, pos_off)
+                if front is None:
+                    return LineString([ls.coords[-1], ls.coords[-1]])
+            else:
+                front = ls
+            if neg_off > 0.0:
+                _, back = split_line(front.reverse(), neg_off)
+                if back is None:
+                    return LineString([front.coords[0], front.coords[0]])
+                back = back.reverse()
+            else:
+                back = front
+            return back
+        else:
+            return ls
+
+    @staticmethod
     def adjust_locref(
-        locref: LineLocationReference, ls: LineString
+            locref: LineLocationReference, ls: LineString
     ) -> LineLocationReference:
         """
         Adjust the location reference so that the entire location reference is within the buffer
@@ -52,12 +111,13 @@ class Analyzer:
         Returns: possibly modified location reference
 
         """
-        if locref.poffs == 0 and locref.noffs == 0:
+        if locref.poffs == 0.0 and locref.noffs == 0.0:
+            # nothing to do
             return locref
 
-        lrps = locref.points
+        lrps: List[LocationReferencePoint] = locref.points
 
-        if locref.poffs > 0:
+        if locref.poffs > 0.0:
             p = Point(lrps[1].lon, lrps[1].lat)
             pref, _ = geoutils.split_line_at_point(ls, p)
             dnp = geoutils.line_string_length(pref)
@@ -77,7 +137,7 @@ class Analyzer:
                 dnp=int(dnp),
             )
 
-        if locref.noffs > 0:
+        if locref.noffs > 0.0:
             p = Point(lrps[-2].lon, lrps[-2].lat)
             _, suff = geoutils.split_line_at_point(ls, p)
             dnp = geoutils.line_string_length(suff)
@@ -109,39 +169,20 @@ class Analyzer:
 
         return LineLocationReference(points=lrps, poffs=0, noffs=0)
 
-    @staticmethod
-    def build_decoded_ls(decode_result: LineLocation) -> LineString:
-        tmp: LineString = geoutils.join_lines([line.geometry for line in decode_result.lines])
-        pos_off = decode_result.p_off
-        neg_off = decode_result.n_off
-        if pos_off > 0 or neg_off > 0:
-            ls_length: float = sum([line.length for line in decode_result.lines])
-            if ls_length - pos_off - neg_off < 1.0:
-                # The decoded line is shorter than the sum of the offsets
-                # Adjusts the offsets such that the line is at least 1 meter long
-                additional_length = max(int(pos_off + neg_off - ls_length ) / 2, 1)
-                pos_off = max(pos_off - additional_length, 0)
-                neg_off = max(neg_off - additional_length, 0)
-            if pos_off > 0:
-                _, front = split_line(tmp, pos_off)
-                if front is None:
-                    return LineString([tmp.coords[-1], tmp.coords[-1]])
-            else:
-                front = tmp
-            if neg_off > 0:
-                _, back = split_line(front.reverse(), neg_off)
-                if back is None:
-                    return LineString([front.coords[0], front.coords[0]])
-                back = back.reverse()
-            else:
-                back = front
-            return back
-        else:
-            return tmp
 
     def create_buffer_reader(
-        self, loc_ref: LineLocationReference, buffered_ls: Polygon
+            self, loc_ref: LineLocationReference, buffered_ls: Polygon
     ) -> BufferReader:
+        """
+        Create a BufferReader instance for a given location reference and buffered LineString
+        Args:
+            loc_ref: LineLocationReference representing encoded location
+            buffered_ls: polygonal buffer around the encoded location
+
+        Returns:
+            a newly constructed BufferReader instance
+
+        """
         return BufferReader(
             buffer=buffered_ls,
             loc_ref=loc_ref,
@@ -150,22 +191,43 @@ class Analyzer:
         )
 
     def match_binary(
-        self, binstr: str
+            self, binstr: str
     ) -> Tuple[LineLocation, LineString, CandidateCollector] | MatchResult:
-        locref: LineLocationReference = binary_decode(binstr)
-        if not isinstance(locref, LineLocationReference):
-            return MatchResult.UNSUPPORTED_LOCATION_REFERENCE_TYPE
-        return self.match_location(locref)
+        """
+        Match a binary OpenLR location reference using this Analyzer's map reader
+        Args:
+            binstr: OpenLR binary location reference (Line Location)
+
+        Returns:
+            Tuple of LineLocation, decoded LineString, and CandidateCollector if the match was successful, or a
+            MatchResult indicating the reason for failure
+
+        """
+        t_locref: LineLocationReference = binary_decode(binstr)
+        if not isinstance(t_locref, LineLocationReference):
+            return MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE
+        loc_ref = cast(LineLocationReference, t_locref)
+        return self.match_location(loc_ref)
 
     def match_location(
-        self, locref: LineLocationReference
+            self, locref: LineLocationReference
     ) -> Tuple[LineLocation, LineString, CandidateCollector] | MatchResult:
+        """
+        Match a LineLocationReference using this Analyzer's map reader
+        Args:
+            locref: LineLocation Reference to be decoded (matched)
+
+        Returns:
+            Tuple of LineLocation, decoded LineString, and CandidateCollector if the match was successful, or a
+            MatchResult indicating the reason for failure
+
+        """
         observer = CandidateCollector()
         location = self.map_reader.match_location(locref, observer=observer)
         if location is None:
             return MatchResult.DECODING_FAILED
         if not isinstance(location, LineLocation):
-            return MatchResult.UNSUPPORTED_LOCATION_TYPE
+            return MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE
         decoded_ls = self.build_decoded_ls(location)
         return location, decoded_ls, observer
 
@@ -175,9 +237,11 @@ class Analyzer:
         if self.map_bounds and not self.map_bounds.covers(ls):
             return olr, AnalysisResult.OUTSIDE_MAP_BOUNDS, 0.0
 
-        loc_ref = binary_decode(olr)
-        if not isinstance(loc_ref, LineLocationReference):
+        t_loc_ref: LineLocationReference = binary_decode(olr)
+        if not isinstance(t_loc_ref, LineLocationReference):
             return olr, AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
+        # narrow type of LocationReference
+        loc_ref: LineLocationReference = cast(LineLocationReference, t_loc_ref)
 
         match self.match_location(loc_ref):
             case (line_location, decoded_ls, observer):
@@ -188,7 +252,7 @@ class Analyzer:
                     return olr, AnalysisResult.OK, 1.0
                 else:
                     percentage_within_buffer = (
-                        intersection(buffered_ls, decoded_ls).length / decoded_ls.length
+                            intersection(buffered_ls, decoded_ls).length / decoded_ls.length
                     )
                     if line_location.p_off > 0 or line_location.n_off > 0:
                         return (
@@ -220,20 +284,20 @@ class Analyzer:
                     self.determine_restricted_decoding_failure_cause(buffer_map_reader),
                     0.0,
                 )
-            case MatchResult.UNSUPPORTED_LOCATION_TYPE:
+            case MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE:
                 return olr, AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
 
     def adjust_locref_and_match(
-        self,
-        loc_ref: LineLocationReference,
-        unrestricted_line_location: LineLocation,
-        decoded_ls: LineString,
-        buffered_ls: Polygon,
-        observer: CandidateCollector,
+            self,
+            loc_ref: LineLocationReference,
+            unrestricted_line_location: LineLocation,
+            decoded_ls: LineString,
+            buffered_ls: Polygon,
+            observer: CandidateCollector,
     ) -> AnalysisResult:
         try:
             adj_loc_ref = self.adjust_locref(loc_ref, decoded_ls)
-        except GeodError as ge:
+        except GeodError:
             return AnalysisResult.INVALID_GEOMETRY
         match self.match_location(adj_loc_ref):
             case (adj_loc, decoded_ls, adj_observer):
@@ -253,15 +317,15 @@ class Analyzer:
                 return self.determine_restricted_decoding_failure_cause(
                     buffer_map_reader
                 )
-            case MatchResult.UNSUPPORTED_LOCATION_TYPE:
+            case MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE:
                 return AnalysisResult.UNSUPPORTED_LOCATION_TYPE
 
     def analyze_within_buffer(
-        self,
-        loc_ref: LineLocationReference,
-        loc: LineLocation,
-        buffered_ls: Polygon,
-        observer: CandidateCollector,
+            self,
+            loc_ref: LineLocationReference,
+            loc: LineLocation,
+            buffered_ls: Polygon,
+            observer: CandidateCollector,
     ) -> AnalysisResult:
         buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
         buffer_observer = CandidateCollector()
@@ -278,30 +342,13 @@ class Analyzer:
         else:
             return self.determine_restricted_decoding_failure_cause(buffer_map_reader)
 
-    @staticmethod
-    def determine_restricted_decoding_failure_cause(
-        buffer_map_reader: BufferReader,
-    ) -> AnalysisResult:
-        # We're here because we couldn't find a path in the restricted target map
-
-        if not buffer_map_reader.match(config=AnyPath):
-            return AnalysisResult.MISSING_OR_MISCONFIGURED_ROAD
-        if buffer_map_reader.match(config=IgnoreFRC):
-            return AnalysisResult.FRC_MISMATCH
-        if buffer_map_reader.match(config=IgnoreFOW):
-            return AnalysisResult.FOW_MISMATCH
-        if buffer_map_reader.match(config=IgnorePathLength):
-            return AnalysisResult.PATH_LENGTH_MISMATCH
-        if buffer_map_reader.match(config=IgnoreBearing):
-            return AnalysisResult.BEARING_MISMATCH
-        return AnalysisResult.MULTIPLE_ATTRIBUTE_MISMATCHES
 
     def diagnose_score(
-        self,
-        lrp: LocationReferencePoint,
-        outside: Candidate,
-        inside: Candidate,
-        is_last: bool,
+            self,
+            lrp: LocationReferencePoint,
+            outside: Candidate,
+            inside: Candidate,
+            is_last: bool,
     ) -> AnalysisResult:
         # assert outside.score >= inside.score
         out_score_collector = ScoreCollector()
@@ -336,16 +383,16 @@ class Analyzer:
 
         components = [0.0, 0.0, 0.0, 0.0]
         components[0] = self.map_reader.config.geo_weight * (
-            out_score_collector.geo_score - in_score_collector.geo_score
+                out_score_collector.geo_score - in_score_collector.geo_score
         )
         components[1] = self.map_reader.config.bear_weight * (
-            out_score_collector.bear_score - in_score_collector.bear_score
+                out_score_collector.bear_score - in_score_collector.bear_score
         )
         components[2] = self.map_reader.config.frc_weight * (
-            out_score_collector.frc_score - in_score_collector.frc_score
+                out_score_collector.frc_score - in_score_collector.frc_score
         )
         components[3] = self.map_reader.config.fow_weight * (
-            out_score_collector.fow_score - in_score_collector.fow_score
+                out_score_collector.fow_score - in_score_collector.fow_score
         )
 
         match components.index(max(components)):
@@ -359,11 +406,11 @@ class Analyzer:
                 return AnalysisResult.BETTER_FOW_FOUND
 
     def compare_locations(
-        self,
-        outside_loc: LineLocation,
-        outside_obs: CandidateCollector,
-        inside_loc: LineLocation,
-        inside_obs: CandidateCollector,
+            self,
+            outside_loc: LineLocation,
+            outside_obs: CandidateCollector,
+            inside_loc: LineLocation,
+            inside_obs: CandidateCollector,
     ) -> AnalysisResult:
         assert len(outside_obs.candidates) == len(inside_obs.candidates)
         outside_pairs = [
@@ -372,8 +419,8 @@ class Analyzer:
         inside_pairs = [inside_obs.candidates[i] for i in sorted(inside_obs.candidates)]
 
         if (outside_pairs[0][1].line.line_id != inside_pairs[0][1].line.line_id) and (
-            outside_pairs[0][1].line.end_node.node_id
-            != inside_pairs[0][1].line.start_node.node_id
+                outside_pairs[0][1].line.end_node.node_id
+                != inside_pairs[0][1].line.start_node.node_id
         ):
             return self.diagnose_score(
                 lrp=outside_pairs[0][0],
@@ -383,8 +430,8 @@ class Analyzer:
             )
 
         for outside, inside in zip(
-            outside_pairs[1:-1],
-            inside_pairs[1:-1],
+                outside_pairs[1:-1],
+                inside_pairs[1:-1],
         ):
             assert outside[0] == inside[0]
             if outside[1].line.line_id != inside[1].line.line_id:
@@ -393,8 +440,8 @@ class Analyzer:
                 )
 
         if (outside_pairs[-1][1].line.line_id != inside_pairs[-1][1].line.line_id) and (
-            outside_pairs[-1][1].line.start_node.node_id
-            != inside_pairs[-1][1].line.end_node.node_id
+                outside_pairs[-1][1].line.start_node.node_id
+                != inside_pairs[-1][1].line.end_node.node_id
         ):
             return self.diagnose_score(
                 lrp=outside_pairs[-1][0],

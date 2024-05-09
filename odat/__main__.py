@@ -39,7 +39,7 @@ def parse_cli_args():
     p.add(
         "--decoder_config",
         env_var="ODAT_DECODER_CONFIG",
-        help="Decder configuration to use when decoding against target map",
+        help="Decoder configuration to use when decoding against target map",
     )
     p.add(
         "--mod_spatialite",
@@ -62,10 +62,11 @@ def parse_cli_args():
         help="Size of buffer in meters to construct around source geometry",
     )
     p.add(
-        "--concavehull_ratio",
-        env_var="ODAT_CONCAVEHULL_RATIO",
+        "--concave_ratio",
+        env_var="ODAT_CONCAVE_RATIO",
         help="GeosConcaveHull() ratio [0.0..]. Smaller means more accurate map_extent but slower execution.  "
-        ">= 1.0 means simple BBOX)",
+        "1.0 means take convex hull as map_extent (fastest execution, least accurate map_extent)"
+        " > 1.0 means bypass map extent check",
     )
 
     p.add(
@@ -97,7 +98,7 @@ def main():
         mod_spatialite=_opt.mod_spatialite,
         output_dir=_opt.output_dir,
         target_crs=_opt.target_crs,
-        concavehull_ratio=_opt.concavehull_ratio,
+        concave_ratio=_opt.concave_ratio,
         buffer=_opt.buffer,
         lrp_radius=_opt.lrp_radius,
         num_threads=_opt.num_threads,

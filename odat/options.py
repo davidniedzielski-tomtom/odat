@@ -2,6 +2,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, FilePath, field_validator
 
+"""
+This class holds the pydantic sanitized and validated CLI options controlling the ODAT analysis process.
+"""
 
 class Options(BaseModel):
     db: FilePath
@@ -12,7 +15,7 @@ class Options(BaseModel):
     mod_spatialite: str
     output_dir: str
     target_crs: str
-    concavehull_ratio: float = Field(0.5, ge=0.0, le=1.0)
+    concave_ratio: float = Field(0.5, ge=0.0)
     buffer: int = Field(20, ge=0)
     lrp_radius: int = Field(20, ge=0)
     num_threads: int = Field(1, ge=1)

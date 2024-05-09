@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from multiprocessing import Queue
 from time import perf_counter_ns
-from typing import Dict, Set, Tuple
+from typing import Dict, Set, Tuple, Optional
 import time
 
 from functools import reduce
@@ -157,9 +157,11 @@ def get_config(config: str):
             )
 
 
-def get_map_bounds(map_reader: TomTomMapReaderSQLite, concavehull_ratio: float):
+def get_map_bounds(map_reader: TomTomMapReaderSQLite, concave_ratio: float) -> Optional[Polygon]:
+    if concave_ratio > 1.0:
+        return None
     try:
-        return map_reader.get_map_bounds(concavehull_ratio)
+        return map_reader.get_map_bounds(concave_ratio)
     except sqlite3.DataError as sde:
         logging.warning(f"Unable to calculate concave map bounds: {sde}. "
                         "Re-trying with convex hull (MISSING_OR_MISCONFIGURED_ROAD counts may be inaccurate).")
@@ -247,7 +249,7 @@ def run_parallel_analyzer(options: Options):
         config=config,
     )
     map_bounds_start = perf_counter_ns()
-    map_bounds = get_map_bounds(rdr, float(options.concavehull_ratio))
+    map_bounds: Optional[Polygon] = get_map_bounds(rdr, float(options.concave_ratio))
     map_bounds_time = perf_counter_ns() - map_bounds_start
 
     # spawn the workers
@@ -276,7 +278,7 @@ def run_parallel_analyzer(options: Options):
         "lrp_radius": options.lrp_radius,
         "decoder_config": options.decoder_config,
         "target_crs": options.target_crs,
-        "concavehull_ratio": options.concavehull_ratio,
+        "concave_ratio": options.concave_ratio,
         "db": f"{str(options.db)}",
         "mod_spatialite": options.mod_spatialite,
         "lines_table": options.lines_table,
