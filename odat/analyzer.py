@@ -11,6 +11,7 @@ from pyproj.exceptions import GeodError
 from shapely import LineString, Point, Polygon, intersection
 from webtool.map_databases.tomtom_sqlite import TomTomMapReaderSQLite
 
+from .analysis_observer import AnalysisObserver
 from .analysis_result import AnalysisResult
 from .buffer_reader import BufferReader
 from .decoder_configs import (
@@ -21,8 +22,7 @@ from .decoder_configs import (
     IgnorePathLength,
     IgnoreBearing,
 )
-from .match_result import MatchResult
-from .odat_observer import CandidateCollector, ScoreCollector
+from .decoder_observer import CandidateCollector, ScoreCollector
 
 
 class Analyzer:
@@ -38,23 +38,41 @@ class Analyzer:
         self.buffer_radius = buffer_radius
         self.lrp_radius = lrp_radius
         self.map_bounds = map_bounds
+        self.analysis_observer = None
 
-    @staticmethod
     def determine_restricted_decoding_failure_cause(
+            self,
             buffer_map_reader: BufferReader,
     ) -> AnalysisResult:
         # We're here because we couldn't find a path in the restricted target map
 
         if not buffer_map_reader.match(config=AnyPath):
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_any_path_fail()
             return AnalysisResult.MISSING_OR_MISCONFIGURED_ROAD
+
         if buffer_map_reader.match(config=IgnoreFRC):
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_frc_fail()
             return AnalysisResult.FRC_MISMATCH
+
         if buffer_map_reader.match(config=IgnoreFOW):
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_fow_fail()
             return AnalysisResult.FOW_MISMATCH
+
         if buffer_map_reader.match(config=IgnorePathLength):
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_length_fail()
             return AnalysisResult.PATH_LENGTH_MISMATCH
+
         if buffer_map_reader.match(config=IgnoreBearing):
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_bearing_fail()
             return AnalysisResult.BEARING_MISMATCH
+
+        if self.analysis_observer:
+            self.analysis_observer.on_diagnose_multiple_attributes_fail()
         return AnalysisResult.MULTIPLE_ATTRIBUTE_MISMATCHES
     @staticmethod
     def build_decoded_ls(decode_result: LineLocation) -> LineString:
@@ -190,28 +208,9 @@ class Analyzer:
             lrp_radius=self.lrp_radius,
         )
 
-    def match_binary(
-            self, binstr: str
-    ) -> Tuple[LineLocation, LineString, CandidateCollector] | MatchResult:
-        """
-        Match a binary OpenLR location reference using this Analyzer's map reader
-        Args:
-            binstr: OpenLR binary location reference (Line Location)
-
-        Returns:
-            Tuple of LineLocation, decoded LineString, and CandidateCollector if the match was successful, or a
-            MatchResult indicating the reason for failure
-
-        """
-        t_locref: LineLocationReference = binary_decode(binstr)
-        if not isinstance(t_locref, LineLocationReference):
-            return MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE
-        loc_ref = cast(LineLocationReference, t_locref)
-        return self.match_location(loc_ref)
-
     def match_location(
             self, locref: LineLocationReference
-    ) -> Tuple[LineLocation, LineString, CandidateCollector] | MatchResult:
+    ) -> Tuple[Optional[LineLocation], Optional[LineString], CandidateCollector] :
         """
         Match a LineLocationReference using this Analyzer's map reader
         Args:
@@ -222,39 +221,79 @@ class Analyzer:
             MatchResult indicating the reason for failure
 
         """
-        observer = CandidateCollector()
-        location = self.map_reader.match_location(locref, observer=observer)
+        decoder_observer = CandidateCollector()
+        location = self.map_reader.match_location(locref, observer=decoder_observer)
         if location is None:
-            return MatchResult.DECODING_FAILED
-        if not isinstance(location, LineLocation):
-            return MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE
+            return None, None, decoder_observer
         decoded_ls = self.build_decoded_ls(location)
-        return location, decoded_ls, observer
+        return location, decoded_ls, decoder_observer
 
-    def analyze(self, olr: str, ls: LineString) -> Tuple[str, AnalysisResult, float]:
+    def analyze(self, olr: str, ls: LineString, analysis_observer: AnalysisObserver = None) -> Tuple[str, AnalysisResult, float]:
         """Analyze a location reference against a map"""
         logging.debug("Beginning analysis of OpenLR %s", olr)
+        self.analysis_observer = analysis_observer
+        if self.analysis_observer:
+            self.analysis_observer.on_analysis_start(olr, ls, self)
+
         if self.map_bounds and not self.map_bounds.covers(ls):
+            if self.analysis_observer:
+                self.analysis_observer.on_out_of_bounds()
             return olr, AnalysisResult.OUTSIDE_MAP_BOUNDS, 0.0
 
         t_loc_ref: LineLocationReference = binary_decode(olr)
+
+        # ensure we're working with a LineLocationReference
         if not isinstance(t_loc_ref, LineLocationReference):
+            if self.analysis_observer:
+                self.analysis_observer.on_unsupported_location_type()
             return olr, AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
+
         # narrow type of LocationReference
         loc_ref: LineLocationReference = cast(LineLocationReference, t_loc_ref)
 
+        # construct a buffer around the encoded location's LineString
+        buffered_ls: Polygon = buffer_wgs84_geometry(
+            ls, Point(ls.coords[0]), self.buffer_radius
+        )
+        if self.analysis_observer:
+            self.analysis_observer.on_buffer_construction(buffered_ls)
+
+        # attempt an initial decoding on the full map
         match self.match_location(loc_ref):
-            case (line_location, decoded_ls, observer):
-                buffered_ls: Polygon = buffer_wgs84_geometry(
-                    ls, Point(ls.coords[0]), self.buffer_radius
+            case (None, None, decoder_observer):
+                # We weren't able to decode the location reference on the full map,
+                # so create a buffer reader and try to determine failure cause
+                if self.analysis_observer:
+                    self.analysis_observer.on_initial_decoding_fail(decoder_observer)
+                buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
+                return (
+                    olr,
+                    self.determine_restricted_decoding_failure_cause(buffer_map_reader),
+                    0.0,
                 )
+            case (line_location, decoded_ls, decoder_observer):
+                if self.analysis_observer:
+                    self.analysis_observer.on_initial_decoding_ok(
+                        line_location, decoded_ls, decoder_observer
+                    )
+                # the initial decoding was successful
                 if buffered_ls.covers(decoded_ls):
+                    if self.analysis_observer:
+                        self.analysis_observer.on_ok()
+                    # all good -- the location is completely covered by the buffer
                     return olr, AnalysisResult.OK, 1.0
                 else:
+                    # the location is not completely covered by the buffer,  Calculate
+                    # the percentage covered and adjust the location reference if necessary
                     percentage_within_buffer = (
                             intersection(buffered_ls, decoded_ls).length / decoded_ls.length
                     )
+                    if self.analysis_observer:
+                        self.analysis_observer.on_decoded_ls_not_in_buffer(percentage_within_buffer)
+
                     if line_location.p_off > 0 or line_location.n_off > 0:
+                        # the location reference has offsets, so create a new reference that
+                        # falls completely within the buffer and analyze further
                         return (
                             olr,
                             self.adjust_locref_and_match(
@@ -262,70 +301,72 @@ class Analyzer:
                                 line_location,
                                 decoded_ls,
                                 buffered_ls,
-                                observer,
+                                decoder_observer,
                             ),
                             percentage_within_buffer,
                         )
                     else:
+                        # no offsets, so we can immediately restrict analysis to the buffer
                         return (
                             olr,
                             self.analyze_within_buffer(
-                                loc_ref, line_location, buffered_ls, observer
+                                loc_ref, line_location, buffered_ls, decoder_observer
                             ),
                             percentage_within_buffer,
                         )
-            case MatchResult.DECODING_FAILED:
-                buffered_ls: Polygon = buffer_wgs84_geometry(
-                    ls, Point(ls.coords[0]), self.buffer_radius
-                )
-                buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
-                return (
-                    olr,
-                    self.determine_restricted_decoding_failure_cause(buffer_map_reader),
-                    0.0,
-                )
-            case MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE:
-                return olr, AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
 
     def adjust_locref_and_match(
             self,
             loc_ref: LineLocationReference,
             unrestricted_line_location: LineLocation,
-            decoded_ls: LineString,
+            adj_decoded_ls: LineString,
             buffered_ls: Polygon,
-            observer: CandidateCollector,
+            decoder_observer: CandidateCollector,
     ) -> AnalysisResult:
         try:
-            adj_loc_ref = self.adjust_locref(loc_ref, decoded_ls)
+            adj_loc_ref = self.adjust_locref(loc_ref, adj_decoded_ls)
         except GeodError:
+            if self.analysis_observer:
+                self.analysis_observer.on_invalid_geometry()
             return AnalysisResult.INVALID_GEOMETRY
         match self.match_location(adj_loc_ref):
-            case (adj_loc, decoded_ls, adj_observer):
-                if buffered_ls.covers(decoded_ls):
-                    return self.compare_locations(
-                        unrestricted_line_location,
-                        observer,
-                        adj_loc,
-                        adj_observer,
-                    )
-                else:
-                    return self.analyze_within_buffer(
-                        adj_loc_ref, adj_loc, buffered_ls, adj_observer
-                    )
-            case MatchResult.DECODING_FAILED:
+            case None, None, decoder_observer:
+                # we couldn't match a location within the buffer
+                if self.analysis_observer:
+                    self.analysis_observer.on_adj_loc_ref_match_fail(decoder_observer)
                 buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
                 return self.determine_restricted_decoding_failure_cause(
                     buffer_map_reader
                 )
-            case MatchResult.UNKNOWN_LOCATION_REFERENCE_TYPE:
-                return AnalysisResult.UNSUPPORTED_LOCATION_TYPE
+            case (adj_loc, adj_decoded_ls, adj_decoder_observer):
+                if self.analysis_observer:
+                    self.analysis_observer.on_adj_loc_ref_match_success(
+                        adj_loc, adj_decoded_ls, adj_decoder_observer
+                    )
+                if buffered_ls.covers(adj_decoded_ls):
+                    if self.analysis_observer:
+                        self.analysis_observer.on_adj_loc_ref_within_buffer()
+                    # the decoding of the adjusted locref is completely within the buffer,
+                    # so try and determine why the original decoding wasn't
+                    return self.compare_locations(
+                        unrestricted_line_location,
+                        decoder_observer,
+                        adj_loc,
+                        adj_decoder_observer,
+                    )
+                else:
+                    if self.analysis_observer:
+                        self.analysis_observer.on_adj_loc_ref_outside_buffer()
+                    return self.analyze_within_buffer(
+                        adj_loc_ref, adj_loc, buffered_ls, adj_decoder_observer
+                    )
 
     def analyze_within_buffer(
             self,
             loc_ref: LineLocationReference,
             loc: LineLocation,
             buffered_ls: Polygon,
-            observer: CandidateCollector,
+            decoder_observer: CandidateCollector,
     ) -> AnalysisResult:
         buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
         buffer_observer = CandidateCollector()
@@ -333,13 +374,19 @@ class Analyzer:
             config=StrictConfig, observer=buffer_observer
         )
         if buffer_loc:
+            # we found a path within the buffer, so try and determine why we chose
+            # a different path in the full map
+            if self.analysis_observer:
+                self.analysis_observer.on_match_within_buffer_ok(buffer_loc, buffer_observer)
             return self.compare_locations(
                 loc,
-                observer,
+                decoder_observer,
                 buffer_loc,
                 buffer_observer,
             )
         else:
+            if self.analysis_observer:
+                self.analysis_observer.on_match_within_buffer_fail(buffer_observer)
             return self.determine_restricted_decoding_failure_cause(buffer_map_reader)
 
 
@@ -375,10 +422,18 @@ class Analyzer:
         )
 
         if in_score_collector.frc_reject:
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_frc_reject(in_score_collector)
             return AnalysisResult.BETTER_FRC_FOUND
-        if in_score_collector.bear_reject:
+
+        if in_score_collector.bearing_reject:
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_bearing_reject(in_score_collector)
             return AnalysisResult.BETTER_BEARING_FOUND
+
         if in_score_collector.score_reject:
+            if self.analysis_observer:
+                self.analysis_observer.on_diagnose_low_score_reject(in_score_collector)
             return AnalysisResult.BETTER_SCORE_FOUND
 
         components = [0.0, 0.0, 0.0, 0.0]
@@ -386,7 +441,7 @@ class Analyzer:
                 out_score_collector.geo_score - in_score_collector.geo_score
         )
         components[1] = self.map_reader.config.bear_weight * (
-                out_score_collector.bear_score - in_score_collector.bear_score
+                out_score_collector.bearing_score - in_score_collector.bearing_score
         )
         components[2] = self.map_reader.config.frc_weight * (
                 out_score_collector.frc_score - in_score_collector.frc_score
@@ -397,12 +452,23 @@ class Analyzer:
 
         match components.index(max(components)):
             case 0:
+                if self.analysis_observer:
+                    self.analysis_observer.on_diagnose_better_geolocation(components)
                 return AnalysisResult.BETTER_GEOLOCATION_FOUND
+
             case 1:
+                if self.analysis_observer:
+                    self.analysis_observer.on_diagnose_better_bearing(components)
                 return AnalysisResult.BETTER_BEARING_FOUND
+
             case 2:
+                if self.analysis_observer:
+                    self.analysis_observer.on_diagnose_better_frc(components)
                 return AnalysisResult.BETTER_FRC_FOUND
+
             case 3:
+                if self.analysis_observer:
+                    self.analysis_observer.on_diagnose_better_fow(components)
                 return AnalysisResult.BETTER_FOW_FOUND
 
     def compare_locations(
@@ -418,10 +484,18 @@ class Analyzer:
         ]
         inside_pairs = [inside_obs.candidates[i] for i in sorted(inside_obs.candidates)]
 
+        # check if the first LRP was placed on the same line
         if (outside_pairs[0][1].line.line_id != inside_pairs[0][1].line.line_id) and (
                 outside_pairs[0][1].line.end_node.node_id
                 != inside_pairs[0][1].line.start_node.node_id
         ):
+            if self.analysis_observer:
+                self.analysis_observer.on_lrp_placement_difference(
+                    0,
+                    outside_pairs[0][0],
+                    inside_pairs[0][1],
+                    outside_pairs[0][1],
+                )
             return self.diagnose_score(
                 lrp=outside_pairs[0][0],
                 outside=outside_pairs[0][1],
@@ -429,24 +503,43 @@ class Analyzer:
                 is_last=False,
             )
 
-        for outside, inside in zip(
+        for index, (outside, inside) in enumerate(zip(
                 outside_pairs[1:-1],
                 inside_pairs[1:-1],
-        ):
+        ),1):
             assert outside[0] == inside[0]
+            # check if the intermediate LRPs were placed on the same line
             if outside[1].line.line_id != inside[1].line.line_id:
+                if self.analysis_observer:
+                    self.analysis_observer.on_lrp_placement_difference(
+                        index,
+                        outside[0],
+                        inside[1],
+                        outside[1],
+                    )
                 return self.diagnose_score(
                     lrp=outside[0], outside=outside[1], inside=inside[1], is_last=False
                 )
 
+        # check if the last LRP was placed on the same line
         if (outside_pairs[-1][1].line.line_id != inside_pairs[-1][1].line.line_id) and (
                 outside_pairs[-1][1].line.start_node.node_id
                 != inside_pairs[-1][1].line.end_node.node_id
         ):
+            if self.analysis_observer:
+                self.analysis_observer.on_lrp_placement_difference(
+                    len(outside_pairs) - 1,
+                    outside_pairs[-1][0],
+                    inside_pairs[-1][1],
+                    outside_pairs[-1][1],
+                )
             return self.diagnose_score(
                 lrp=outside_pairs[-1][0],
                 outside=outside_pairs[-1][1],
                 inside=inside_pairs[-1][1],
                 is_last=True,
             )
+        if self.analysis_observer:
+            self.analysis_observer.on_diagnose_alternate_sp()
+
         return AnalysisResult.ALTERNATE_SHORTEST_PATH

@@ -9,6 +9,15 @@ from openlr_dereferencer.decoding.routes import PointOnLine, Route
 from openlr_dereferencer.maps import Line
 
 
+
+def on_diagnose_frc_ok(self) -> None:
+    pass
+
+
+def on_diagnose_frc_fail(self) -> None:
+    pass
+
+
 class CandidateCollector(DecoderObserver):
     def __init__(self):
         self.candidates: Dict[int, Tuple[LocationReferencePoint, Candidate]] = {}
@@ -45,7 +54,7 @@ class CandidateCollector(DecoderObserver):
         geo_score: float,
         fow_score: float,
         frc_score: float,
-        bear_score: float,
+        bearing_score: float,
         total_score: float,
     ):
         """
@@ -140,11 +149,11 @@ class ScoreCollector(DecoderObserver):
         self.geo_score = 0.0
         self.fow_score = 0.0
         self.frc_score = 0.0
-        self.bear_score = 0.0
+        self.bearing_score = 0.0
         self.total_score = 0.0
 
         self.frc_reject: bool = False
-        self.bear_reject: bool = False
+        self.bearing_reject: bool = False
         self.score_reject = False
 
 
@@ -171,7 +180,7 @@ class ScoreCollector(DecoderObserver):
         """
         Called by the decoder when a candidate for a location reference point is rejected due to excessive bearing difference
         """
-        self.bear_reject = True
+        self.bearing_reject = True
 
     def on_candidate_score(
             self,
@@ -189,7 +198,7 @@ class ScoreCollector(DecoderObserver):
         self.geo_score = geo_score
         self.fow_score = fow_score
         self.frc_score = frc_score
-        self.bear_score = bear_score
+        self.bearing_score = bear_score
         self.total_score = total_score
 
 
@@ -273,3 +282,4 @@ class ScoreCollector(DecoderObserver):
         The only way of recovering is to go back and discard the last bit of
         the dereferenced line location, if possible."""
         pass
+

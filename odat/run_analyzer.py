@@ -19,6 +19,7 @@ from webtool.map_databases.tomtom_sqlite import TomTomMapReaderSQLite
 
 from odat.analysis_result import AnalysisResult
 from odat.decoder_configs import StrictConfig, RelaxedConfig
+from .analysis_observer import AnalysisCollector, AnalysisObserver
 from .analyzer import Analyzer
 
 import multiprocessing as mp
@@ -27,6 +28,8 @@ from .options import Options
 
 POISON_PILL_MSG = "__DONE__"
 
+def process_observer(observer: AnalysisObserver, options: Options):
+    pass
 
 def build_results_table(results: Dict[str, Set[Tuple[str, float]]], count: int) -> Table:
     table = Table(title="ODAT analysis summary")
@@ -116,6 +119,8 @@ def load_queue(q, options):
                 olr: str = loc["locationReference"]
                 category: str = loc["category"]
                 frc: int = int(loc["frc"])
+                if options.detailed and olr != options.detailed:
+                    continue
                 q.put((olr, ls, category, frc))
             except Exception as e:
                 logging.warning(f"Error loading {loc['locationReference']}: {e}")
@@ -207,7 +212,12 @@ def worker(
     while msg != POISON_PILL_MSG:
         try:
             olr, ls, category, frc = msg
-            olr, res, frac = dat.analyze(olr, ls)
+            if options.detailed and olr == options.detailed:
+                analysis_observer = AnalysisCollector()
+                olr, res, frac = dat.analyze(olr, ls, analysis_observer)
+                process_observer(analysis_observer, options)
+            else:
+                olr, res, frac = dat.analyze(olr, ls)
             enqueue(olr, category, frc, res, frac)
         except Exception as e:
             logging.error(f"Error during analysis of {olr}: {e}")

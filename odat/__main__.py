@@ -27,6 +27,11 @@ def parse_cli_args():
         help="path to source JSON containing binary OpenLRs and source linestrings",
     )
     p.add(
+        "-d",
+        "--detailed",
+        help="OpenLR code to be verbosely analyzed",
+    )
+    p.add(
         "--lines_table",
         env_var="ODAT_LINES_TABLE",
         help="SQLite table in target DB containing lines",
@@ -92,6 +97,7 @@ def main():
     options = Options(
         db=_opt.db,
         input=_opt.input,
+        detailed=_opt.detailed,
         lines_table=_opt.lines_table,
         nodes_table=_opt.nodes_table,
         decoder_config=_opt.decoder_config,
