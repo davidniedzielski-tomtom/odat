@@ -1,4 +1,4 @@
-from typing import Protocol, List
+from typing import Protocol, List, Any
 
 from openlr import LineLocationReference, LocationReferencePoint
 from openlr_dereferencer import DecoderObserver
@@ -133,7 +133,7 @@ class AnalysisObserver(Protocol):
     def on_adj_loc_ref_outside_buffer(self) -> None:
         pass
 
-    def on_unsupported_location_type(self) -> None:
+    def on_unsupported_location_type(self, loc_ref: Any) -> None:
         """
         Called when the analyzer is passed an OpenLR code that is not a LineLocationReference
         """
@@ -248,7 +248,7 @@ class AnalysisCollector(AnalysisObserver):
     def on_adj_loc_ref_outside_buffer(self) -> None:
         print("Adjusted location reference outside buffer")
 
-    def on_unsupported_location_type(self) -> None:
+    def on_unsupported_location_type(self, loc_ref: Any) -> None:
         print("Unsupported location type")
 
     def on_diagnose_any_path_fail(self) -> None:

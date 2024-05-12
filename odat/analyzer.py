@@ -44,6 +44,20 @@ class Analyzer:
             self,
             buffer_map_reader: BufferReader,
     ) -> AnalysisResult:
+        """
+        Given a BufferReader containing a map restricted to a buffer around an encoded location, determine why
+        the location cannot be decoded to a pth that falls within the buffer.  The idea is to perform a series
+        of decoding, each of which ignores a different attribute of the location reference until a path is found.
+        The last attribute ignored is assumed to be the attribute that caused the failure.  The first decoding
+        ignores all attributes and checks whether there any viable path through the buffer that connects the
+        LRPs, obeying only road geometries and one-way directions.
+        Args:
+            buffer_map_reader: BufferReader containing a map restricted to a buffer around an encoded location
+
+        Returns:
+            AnalysisResult describing the cause of the failure
+
+        """
         # We're here because we couldn't find a path in the restricted target map
 
         if not buffer_map_reader.match(config=AnyPath):
@@ -229,9 +243,27 @@ class Analyzer:
         return location, decoded_ls, decoder_observer
 
     def analyze(self, olr: str, ls: LineString, analysis_observer: AnalysisObserver = None) -> Tuple[str, AnalysisResult, float]:
-        """Analyze a location reference against a map"""
+        """
+        Given an OpenLR code and a LineString representing the location it represents on the encoding map, determine
+        whether the the code can be decoded on the target map in such a way that the decoded location fits within
+        a buffer around the encoded location.  If the decoded location is completely within the buffer, then we can
+        assume the encoded and decoded locations are similar enough to be considered a match.  If the decoding fails,
+        if the decoded location does not fit within a buffer, perform a number of analyses to determine the cause of
+        the failure.
+
+        Args:
+            olr: OpenLR string to be decoded
+            ls: LineString representing the "intended" location on the source map
+            analysis_observer: an optional AnalysisObserver that records events occurring during the analysis
+
+        Returns:
+            Tuple of OpenLR string, AnalysisResult describing the analysis result, and a float representing the
+            percentage of the decoded location that is within the buffer
+
+        """
         logging.debug("Beginning analysis of OpenLR %s", olr)
         self.analysis_observer = analysis_observer
+
         if self.analysis_observer:
             self.analysis_observer.on_analysis_start(olr, ls, self)
 
@@ -245,38 +277,40 @@ class Analyzer:
         # ensure we're working with a LineLocationReference
         if not isinstance(t_loc_ref, LineLocationReference):
             if self.analysis_observer:
-                self.analysis_observer.on_unsupported_location_type()
+                self.analysis_observer.on_unsupported_location_type(t_loc_ref)
             return olr, AnalysisResult.UNSUPPORTED_LOCATION_TYPE, 0.0
 
         # narrow type of LocationReference
-        loc_ref: LineLocationReference = cast(LineLocationReference, t_loc_ref)
+        encoded_loc_ref: LineLocationReference = cast(LineLocationReference, t_loc_ref)
 
         # construct a buffer around the encoded location's LineString
         buffered_ls: Polygon = buffer_wgs84_geometry(
             ls, Point(ls.coords[0]), self.buffer_radius
         )
+
         if self.analysis_observer:
             self.analysis_observer.on_buffer_construction(buffered_ls)
 
         # attempt an initial decoding on the full map
-        match self.match_location(loc_ref):
+        match self.match_location(encoded_loc_ref):
             case (None, None, decoder_observer):
                 # We weren't able to decode the location reference on the full map,
                 # so create a buffer reader and try to determine failure cause
                 if self.analysis_observer:
                     self.analysis_observer.on_initial_decoding_fail(decoder_observer)
-                buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
+                buffer_map_reader = self.create_buffer_reader(encoded_loc_ref, buffered_ls)
                 return (
                     olr,
                     self.determine_restricted_decoding_failure_cause(buffer_map_reader),
                     0.0,
                 )
-            case (line_location, decoded_ls, decoder_observer):
+            case (decoded_location, decoded_ls, decoder_observer):
+                # Decoding on the full map was successful -- now check if the location
+                # is completely within the buffer
                 if self.analysis_observer:
                     self.analysis_observer.on_initial_decoding_ok(
-                        line_location, decoded_ls, decoder_observer
+                        decoded_location, decoded_ls, decoder_observer
                     )
-                # the initial decoding was successful
                 if buffered_ls.covers(decoded_ls):
                     if self.analysis_observer:
                         self.analysis_observer.on_ok()
@@ -291,14 +325,14 @@ class Analyzer:
                     if self.analysis_observer:
                         self.analysis_observer.on_decoded_ls_not_in_buffer(percentage_within_buffer)
 
-                    if line_location.p_off > 0 or line_location.n_off > 0:
+                    if decoded_location.p_off > 0 or decoded_location.n_off > 0:
                         # the location reference has offsets, so create a new reference that
-                        # falls completely within the buffer and analyze further
+                        # falls completely within the buffer.
                         return (
                             olr,
                             self.adjust_locref_and_match(
-                                loc_ref,
-                                line_location,
+                                encoded_loc_ref,
+                                decoded_location,
                                 decoded_ls,
                                 buffered_ls,
                                 decoder_observer,
@@ -306,55 +340,82 @@ class Analyzer:
                             percentage_within_buffer,
                         )
                     else:
-                        # no offsets, so we can immediately restrict analysis to the buffer
+                        # no offsets, so determine why a location within the buffer wasn't chosen
                         return (
                             olr,
                             self.analyze_within_buffer(
-                                loc_ref, line_location, buffered_ls, decoder_observer
+                                encoded_loc_ref, decoded_location, buffered_ls, decoder_observer
                             ),
                             percentage_within_buffer,
                         )
 
     def adjust_locref_and_match(
             self,
-            loc_ref: LineLocationReference,
-            unrestricted_line_location: LineLocation,
-            adj_decoded_ls: LineString,
+            encoded_loc_ref: LineLocationReference,
+            full_map_decoded_location: LineLocation,
+            full_map_decoded_ls: LineString,
             buffered_ls: Polygon,
             decoder_observer: CandidateCollector,
     ) -> AnalysisResult:
+        """
+        The initial decoding worked, but the location wasn't within the buffer.  Additionally, the OpenLR
+        location reference has offsets.  This means that the first or last LRP might have been placed on
+        segments outside the buffer.  Regenerate the location reference so that all LRPs are within the
+        buffer, and then decode on the full map to see if the adjusted location is within the buffer.
+
+        Args:
+            encoded_loc_ref: The encoded LineLocationReference
+            full_map_decoded_location: LineLocation from the initial decoding on full map
+            full_map_decoded_ls: LineString from the initial decoding on full map
+            buffered_ls: Polygon around the LineString from the encoded_loc_ref
+            decoder_observer: DecoderObserver from the initial decoding on full map
+
+        Returns:
+            AnalysisResult describing the result of the analysis
+
+        """
         try:
-            adj_loc_ref = self.adjust_locref(loc_ref, adj_decoded_ls)
+            adj_loc_ref: LineLocationReference = self.adjust_locref(encoded_loc_ref, full_map_decoded_ls)
         except GeodError:
             if self.analysis_observer:
                 self.analysis_observer.on_invalid_geometry()
             return AnalysisResult.INVALID_GEOMETRY
+        # Try decoding the adjusted location reference on the full map
         match self.match_location(adj_loc_ref):
-            case None, None, decoder_observer:
-                # we couldn't match a location within the buffer
+            case None, None, adj_decoder_observer:
+                # we couldn't decode the adjusted location reference to a location on the full map.
+                # Since the adjusted location was restricted to the buffer, create a buffer reader and
+                # determine why a location within the buffer could not be found.
                 if self.analysis_observer:
-                    self.analysis_observer.on_adj_loc_ref_match_fail(decoder_observer)
-                buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
+                    self.analysis_observer.on_adj_loc_ref_match_fail(adj_decoder_observer)
+                buffer_map_reader = self.create_buffer_reader(encoded_loc_ref, buffered_ls)
                 return self.determine_restricted_decoding_failure_cause(
                     buffer_map_reader
                 )
-            case (adj_loc, adj_decoded_ls, adj_decoder_observer):
+            case (adj_loc, full_map_decoded_ls, adj_decoder_observer):
+                # we decoded the adjusted loc_ref.  Was the location within the buffer?
                 if self.analysis_observer:
                     self.analysis_observer.on_adj_loc_ref_match_success(
-                        adj_loc, adj_decoded_ls, adj_decoder_observer
+                        adj_loc, full_map_decoded_ls, adj_decoder_observer
                     )
-                if buffered_ls.covers(adj_decoded_ls):
+                if buffered_ls.covers(full_map_decoded_ls):
+                    # The location was completely within the buffer.  Now compare the LRP
+                    # placements in the initial decoding and the adjusted decoding to see
+                    # if and why they differ.
                     if self.analysis_observer:
                         self.analysis_observer.on_adj_loc_ref_within_buffer()
                     # the decoding of the adjusted locref is completely within the buffer,
                     # so try and determine why the original decoding wasn't
                     return self.compare_locations(
-                        unrestricted_line_location,
+                        full_map_decoded_location,
                         decoder_observer,
                         adj_loc,
                         adj_decoder_observer,
                     )
                 else:
+                    # the decoding of the adjusted location on the full map wasn't completely within the
+                    # buffer, so examine the network within the buffer to determine why a path wasn't found
+                    # therein (as it was on the encoding map).
                     if self.analysis_observer:
                         self.analysis_observer.on_adj_loc_ref_outside_buffer()
                     return self.analyze_within_buffer(
@@ -368,8 +429,28 @@ class Analyzer:
             buffered_ls: Polygon,
             decoder_observer: CandidateCollector,
     ) -> AnalysisResult:
+        """
+        A location was found on the full map, but not within the buffer. Attempt to decode the location reference
+        but restrict the map to the buffer.  If a path is found within the buffer, then compare LRP placements
+        to see if they caused the issue.  If no path is found, then attempt a series of controlled decodings
+        to determine why a path within the buffer cannot be found.
+
+        Args:
+            loc_ref: LineLocationReference that *should* be decode-able to a path within the buffer
+            loc: the LineLocation that was decoded on the full map
+            buffered_ls: Polygon representing the buffer around encoded LineString
+            decoder_observer: Decoder observer from the full map decoding
+
+        Returns:
+            AnalysisResult describing the result of the analysis
+
+        """
+
+        # create a MapReader that is restricted to the network within the buffer
         buffer_map_reader = self.create_buffer_reader(loc_ref, buffered_ls)
         buffer_observer = CandidateCollector()
+
+        # attempt a decoding using the buffer map reader
         buffer_loc = buffer_map_reader.match(
             config=StrictConfig, observer=buffer_observer
         )
@@ -385,6 +466,8 @@ class Analyzer:
                 buffer_observer,
             )
         else:
+            # we couldn't find a path within the buffer, so try and determine whether the issue
+            # is due to missing roads, misconfigured roads, or attribution mismatches
             if self.analysis_observer:
                 self.analysis_observer.on_match_within_buffer_fail(buffer_observer)
             return self.determine_restricted_decoding_failure_cause(buffer_map_reader)
@@ -397,7 +480,21 @@ class Analyzer:
             inside: Candidate,
             is_last: bool,
     ) -> AnalysisResult:
-        # assert outside.score >= inside.score
+        """
+        Given two candidates (one chosen on the full map, and other on the buffer map) and an LRP for which
+        they were chosen, determine which LRP attribute caused the outside candidate to be scored higher
+        than the inside candidate.
+
+        Args:
+            lrp: LocationReferencePoint for which the candidates were chosen
+            outside: the candidate chosen for the LRP on the full map
+            inside: the candidate chosen on the buffer map
+            is_last: a boolean indicating whether the LRP is the last in the location reference
+
+        Returns:
+            AnalysisResult describing the result of the analysis
+
+        """
         out_score_collector = ScoreCollector()
         list(
             make_candidates(
@@ -478,6 +575,21 @@ class Analyzer:
             inside_loc: LineLocation,
             inside_obs: CandidateCollector,
     ) -> AnalysisResult:
+        """
+        Compare the LRP placements recorded in two decodings: one on the full map and one on the buffer map. If
+        the placements differ, determine which LRP attribute caused the LRP to be placed on the full map candidate
+        rather than the buffer map candidate.
+
+        Args:
+            outside_loc: LineLocation from the full map decoding
+            outside_obs: DecoderObserver from the full map decoding
+            inside_loc: LineLocation from the buffer map decoding
+            inside_obs: DecoderObserver from the buffer map decoding
+
+        Returns:
+            AnalysisResult describing the result of the analysis
+
+        """
         assert len(outside_obs.candidates) == len(inside_obs.candidates)
         outside_pairs = [
             outside_obs.candidates[i] for i in sorted(outside_obs.candidates)
