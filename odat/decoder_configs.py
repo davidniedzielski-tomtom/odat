@@ -37,12 +37,21 @@ RELAXED_FOW_STAND_IN_SCORE = [
 # This maps the LFRC in the LRP to the minimal FRC that will be
 # accepted
 
-STRICT_TOLERATED_LFRC: Dict[FRC, FRC] = {FRC.FRC0: FRC.FRC1,
-                                         FRC.FRC1: FRC.FRC2,
-                                         FRC.FRC2: FRC.FRC3,
-                                         FRC.FRC3: FRC.FRC4,
-                                         FRC.FRC4: FRC.FRC5,
-                                         FRC.FRC5: FRC.FRC6,
+# STRICT_TOLERATED_LFRC: Dict[FRC, FRC] = {FRC.FRC0: FRC.FRC1,
+#                                          FRC.FRC1: FRC.FRC2,
+#                                          FRC.FRC2: FRC.FRC3,
+#                                          FRC.FRC3: FRC.FRC4,
+#                                          FRC.FRC4: FRC.FRC5,
+#                                          FRC.FRC5: FRC.FRC6,
+#                                          FRC.FRC6: FRC.FRC7,
+#                                          FRC.FRC7: FRC.FRC7,
+#                                          }
+STRICT_TOLERATED_LFRC: Dict[FRC, FRC] = {FRC.FRC0: FRC.FRC2,
+                                         FRC.FRC1: FRC.FRC3,
+                                         FRC.FRC2: FRC.FRC4,
+                                         FRC.FRC3: FRC.FRC5,
+                                         FRC.FRC4: FRC.FRC6,
+                                         FRC.FRC5: FRC.FRC7,
                                          FRC.FRC6: FRC.FRC7,
                                          FRC.FRC7: FRC.FRC7,
                                          }
