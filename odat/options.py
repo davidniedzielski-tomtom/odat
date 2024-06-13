@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 from pydantic import BaseModel, Field, FilePath, field_validator
 
@@ -9,7 +10,7 @@ This class holds the pydantic sanitized and validated CLI options controlling th
 class Options(BaseModel):
     db: FilePath
     input: FilePath
-    detailed: str
+    detailed: Optional[str]
     lines_table: str
     nodes_table: str
     decoder_config: str

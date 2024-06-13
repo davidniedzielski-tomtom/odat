@@ -195,17 +195,17 @@ class AnalysisObserver(Protocol):
 
 class AnalysisCollector(AnalysisObserver):
     def on_analysis_start(self, olr: str, encoded_ls: LineString, analyzer: "Analyzer") -> None:
-        print("Analysis started")
+        print(f"Analysis started of OpenLR: {olr}.  Encoded line string: {encoded_ls}")
 
     def on_initial_decoding_ok(self, line_location: LineLocation, decoded_ls: LineString,
                                decoder_observer: DecoderObserver) -> None:
-        print("Initial decoding successful")
+        print("Initial decoding successful: ", decoded_ls)
 
     def on_initial_decoding_fail(self, decoder_observer: DecoderObserver) -> None:
         print("Initial decoding failed")
 
     def on_buffer_construction(self, buffer: Polygon) -> None:
-        print("Buffer constructed")
+        print("Buffer constructed: ", buffer)
 
     def on_out_of_bounds(self) -> None:
         print("Out of bounds")
