@@ -181,6 +181,8 @@ class Analyzer:
                 if not pref:
                     return locref
                 dnp = geoutils.line_string_length(pref)
+                if not dnp:
+                    return locref
                 bearing_point = geoutils.interpolate(
                     [GeoCoordinates(c[0], c[1]) for c in pref.coords], 20
                 )
@@ -250,7 +252,12 @@ class Analyzer:
                 else:
                     p = Point(lrps[-2].lon, lrps[-2].lat)
                     _, suff = geoutils.split_line_at_point(ls, p)
+                    if not suff:
+                        return locref
                     dnp = geoutils.line_string_length(suff)
+                    if dnp == 0.0:
+                        # TODO: Investigate this: CzLDFSRSwzvxAv/b/5U78QcAAAAAOzlS.  LS doubles back on itself.
+                        return locref
                     bearing_point = geoutils.interpolate(
                         [GeoCoordinates(c[0], c[1]) for c in suff.reverse().coords], 20
                     )
