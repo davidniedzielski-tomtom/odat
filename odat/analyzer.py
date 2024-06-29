@@ -298,7 +298,9 @@ class Analyzer:
                 # so create a buffer reader and try to determine failure cause
                 if self.analysis_observer:
                     self.analysis_observer.on_initial_decoding_fail(decoder_observer)
-                buffer_map_reader = self.create_buffer_reader(encoded_loc_ref, buffered_ls)
+                # adjust the location reference to ensure that all LRPs are within the buffer
+                adjusted_loc_ref = self.adjust_locref(encoded_loc_ref, ls)
+                buffer_map_reader = self.create_buffer_reader(adjusted_loc_ref, buffered_ls)
                 return (
                     olr,
                     self.determine_restricted_decoding_failure_cause(buffer_map_reader),
@@ -619,7 +621,6 @@ class Analyzer:
                 outside_pairs[1:-1],
                 inside_pairs[1:-1],
         ),1):
-            assert outside[0] == inside[0]
             # check if the intermediate LRPs were placed on the same line
             if outside[1].line.line_id != inside[1].line.line_id:
                 if self.analysis_observer:
