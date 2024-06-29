@@ -152,7 +152,8 @@ class Analyzer:
         if locref.poffs > 0.0:
             if (1 - locref.poffs) * lrps[0].dnp < 1.0:
                 if len(lrps) == 2:
-                     return locref
+                    # TODO: somehow cause INVALID_GEOMETRY to be returned because location is too short
+                    return locref
                 else:
                     lrps = lrps[1:]
             else:
@@ -185,13 +186,10 @@ class Analyzer:
                 else:
                     lrps = lrps[:-1]
                     p = Point(lrps[-1].lon, lrps[-1].lat)
-                    pref, _ = geoutils.split_line_at_point(ls, p)
                     bearing_point = geoutils.interpolate(
-                        [GeoCoordinates(c[0], c[1]) for c in pref.reverse().coords], 20
+                        [GeoCoordinates(c[0], c[1]) for c in ls.reverse().coords], 20
                     )
-                    bearing = geoutils.bearing(
-                        GeoCoordinates(pref.coords[-1][0], pref.coords[-1][1]), bearing_point
-                    )
+                    bearing = geoutils.bearing( GeoCoordinates(p.x, p.y), bearing_point )
                     lrps[-1] = LocationReferencePoint(
                         lon=pref.coords[-1][0],
                         lat=pref.coords[-1][1],
@@ -202,34 +200,61 @@ class Analyzer:
                         dnp=lrps[-1].dnp,
                     )
             else:
-                p = Point(lrps[-2].lon, lrps[-2].lat)
-                _, suff = geoutils.split_line_at_point(ls, p)
-                dnp = geoutils.line_string_length(suff)
-                bearing_point = geoutils.interpolate(
-                    [GeoCoordinates(c[0], c[1]) for c in suff.reverse().coords], 20
-                )
-                bearing = geoutils.bearing(
-                    GeoCoordinates(suff.coords[-1][0], suff.coords[-1][1]), bearing_point
-                )
+                if len(lrps) == 2:
+                    dnp = geoutils.line_string_length(ls)
+                    bearing_point = geoutils.interpolate(
+                        [GeoCoordinates(c[0], c[1]) for c in ls.reverse().coords], 20
+                    )
+                    bearing = geoutils.bearing(
+                        GeoCoordinates(ls.coords[-1][0], ls.coords[-1][1]), bearing_point
+                    )
+                    lrps[-2] = LocationReferencePoint(
+                        lon=lrps[-2].lon,
+                        lat=lrps[-2].lat,
+                        frc=lrps[-2].frc,
+                        fow=lrps[-2].fow,
+                        bear=lrps[-2].bear,
+                        lfrcnp=lrps[-2].lfrcnp,
+                        dnp=int(dnp),
+                    )
+                    lrps[-1] = LocationReferencePoint(
+                        lon=ls.coords[-1][0],
+                        lat=ls.coords[-1][1],
+                        frc=lrps[-1].frc,
+                        fow=lrps[-1].fow,
+                        bear=int(bearing),
+                        lfrcnp=lrps[-1].lfrcnp,
+                        dnp=lrps[-1].dnp,
+                    )
+                else:
+                    p = Point(lrps[-2].lon, lrps[-2].lat)
+                    _, suff = geoutils.split_line_at_point(ls, p)
+                    dnp = geoutils.line_string_length(suff)
+                    bearing_point = geoutils.interpolate(
+                        [GeoCoordinates(c[0], c[1]) for c in suff.reverse().coords], 20
+                    )
+                    bearing = geoutils.bearing(
+                        GeoCoordinates(suff.coords[-1][0], suff.coords[-1][1]), bearing_point
+                    )
 
-                lrps[-2] = LocationReferencePoint(
-                    lon=lrps[-2].lon,
-                    lat=lrps[-2].lat,
-                    frc=lrps[-2].frc,
-                    fow=lrps[-2].fow,
-                    bear=lrps[-2].bear,
-                    lfrcnp=lrps[-2].lfrcnp,
-                    dnp=int(dnp),
-                )
-                lrps[-1] = LocationReferencePoint(
-                    lon=suff.coords[-1][0],
-                    lat=suff.coords[-1][1],
-                    frc=lrps[-1].frc,
-                    fow=lrps[-1].fow,
-                    bear=int(bearing),
-                    lfrcnp=lrps[-1].lfrcnp,
-                    dnp=lrps[-1].dnp,
-                )
+                    lrps[-2] = LocationReferencePoint(
+                        lon=lrps[-2].lon,
+                        lat=lrps[-2].lat,
+                        frc=lrps[-2].frc,
+                        fow=lrps[-2].fow,
+                        bear=lrps[-2].bear,
+                        lfrcnp=lrps[-2].lfrcnp,
+                        dnp=int(dnp),
+                    )
+                    lrps[-1] = LocationReferencePoint(
+                        lon=suff.coords[-1][0],
+                        lat=suff.coords[-1][1],
+                        frc=lrps[-1].frc,
+                        fow=lrps[-1].fow,
+                        bear=int(bearing),
+                        lfrcnp=lrps[-1].lfrcnp,
+                        dnp=lrps[-1].dnp,
+                    )
 
         return LineLocationReference(points=lrps, poffs=0, noffs=0)
 
