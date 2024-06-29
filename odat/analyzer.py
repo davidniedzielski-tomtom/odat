@@ -156,6 +156,25 @@ class Analyzer:
                     return locref
                 else:
                     lrps = lrps[1:]
+            elif lrps[0].dnp * locref.poffs < 1.0:
+                pass
+            elif len(lrps) == 2:
+                dnp = geoutils.line_string_length(ls)
+                bearing_point = geoutils.interpolate(
+                    [GeoCoordinates(c[0], c[1]) for c in ls.coords], 20
+                )
+                bearing = geoutils.bearing(
+                    GeoCoordinates(ls.coords[0][0], ls.coords[0][1]), bearing_point
+                )
+                lrps[0] = LocationReferencePoint(
+                    lon=ls.coords[0][0],
+                    lat=ls.coords[0][1],
+                    frc=lrps[0].frc,
+                    fow=lrps[0].fow,
+                    bear=int(bearing),
+                    lfrcnp=lrps[0].lfrcnp,
+                    dnp=int(dnp),
+                )
             else:
                 p = Point(lrps[1].lon, lrps[1].lat)
                 pref, _ = geoutils.split_line_at_point(ls, p)
@@ -199,6 +218,8 @@ class Analyzer:
                         lfrcnp=lrps[-1].lfrcnp,
                         dnp=lrps[-1].dnp,
                     )
+            elif lrps[-2].dnp * locref.noffs < 1.0:
+                pass
             else:
                 if len(lrps) == 2:
                     dnp = geoutils.line_string_length(ls)
