@@ -202,7 +202,7 @@ class Analyzer:
         if locref.noffs > 0.0:
             if (1 - locref.noffs) * lrps[-2].dnp < 1.0:
                 if len(lrps) == 2:
-                    # TODO: somehow cause INVALID_GEOMETRY to be returned because location is too short
+                    # This will still fit within the buffer
                     return LineLocationReference(points=lrps, poffs=0, noffs=0)
                 else:
                     lrps = lrps[:-1]
@@ -212,8 +212,8 @@ class Analyzer:
                     )
                     bearing = geoutils.bearing( GeoCoordinates(p.x, p.y), bearing_point )
                     lrps[-1] = LocationReferencePoint(
-                        lon=pref.coords[-1][0],
-                        lat=pref.coords[-1][1],
+                        lon=lrps[-1].lon,
+                        lat=lrps[-1].lat,
                         frc=lrps[-1].frc,
                         fow=lrps[-1].fow,
                         bear=int(bearing),
